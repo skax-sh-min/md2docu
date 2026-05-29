@@ -118,7 +118,7 @@ System.out.println("Hello, md2docu!");
       <small class="text-muted">ZIP: .md 파일과 이미지를 함께 압축</small>
       <input type="file" id="file-input" accept=".md,.zip" style="display:none"/>
     </div>
-    <div id="file-info" class="text-muted small"></div>
+    <div id="file-info" class="d-none alert alert-info py-2 px-3 fw-semibold"></div>
   </div>
 
   <!-- 변환 옵션 -->
@@ -170,8 +170,8 @@ System.out.println("Hello, md2docu!");
 
   <!-- 결과 -->
   <div id="result-box" class="alert alert-success mt-3">
-    <strong>변환 완료!</strong>
-    <a id="download-link" href="#" class="btn btn-sm btn-success ms-2">다운로드</a>
+    <strong>✅ 변환 완료! 파일이 자동으로 다운로드됩니다.</strong>
+    <a id="download-link" href="#" class="btn btn-sm btn-success ms-2">다시 받기</a>
   </div>
 
   <div id="warning-box" class="alert alert-warning mt-2">
@@ -211,7 +211,9 @@ System.out.println("Hello, md2docu!");
   function handleFile(file) {
     if (!file) return;
     selectedFile = file;
-    document.getElementById('file-info').textContent = `선택된 파일: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+    const info = document.getElementById('file-info');
+    info.textContent = `📄 ${file.name}  (${(file.size / 1024).toFixed(1)} KB)`;
+    info.classList.remove('d-none');
   }
 
   // ── 미리보기 ──────────────────────────────────────────────────────────────
@@ -280,9 +282,19 @@ System.out.println("Hello, md2docu!");
   });
 
   function showResult(data) {
+    // 자동 다운로드
+    const a = document.createElement('a');
+    a.href = data.downloadUrl;
+    a.download = data.fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    // 결과 박스 (수동 재다운로드용)
     const link = document.getElementById('download-link');
     link.href = data.downloadUrl;
-    link.textContent = data.fileName + ' 다운로드';
+    link.download = data.fileName;
+    link.textContent = data.fileName + ' 다시 받기';
     document.getElementById('result-box').style.display = '';
 
     const warnings = data.warnings || [];

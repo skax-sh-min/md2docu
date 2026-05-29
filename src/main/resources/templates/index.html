@@ -125,6 +125,9 @@ System.out.println("Hello, md2docu!");
   <div class="card mb-3">
     <div class="card-header py-2 fw-semibold">변환 옵션</div>
     <div class="card-body py-3">
+      <div id="pdf-warning" class="alert alert-warning py-2 mb-3 d-none">
+        ⚠️ PDF는 라이브러리 한계로 <strong>한글이 깨질 수 있고</strong>, <strong>이미지 첨부가 되지 않을 수 있습니다.</strong> 한글 문서는 DOCX를 권장합니다.
+      </div>
       <div class="row g-3">
         <div class="col-sm-3">
           <label class="form-label small">출력 형식</label>
@@ -191,6 +194,13 @@ System.out.println("Hello, md2docu!");
       document.getElementById('tab-editor').style.display = btn.dataset.tab === 'editor' ? '' : 'none';
       document.getElementById('tab-file').style.display   = btn.dataset.tab === 'file'   ? '' : 'none';
     });
+  });
+
+  // ── PDF 경고 ──────────────────────────────────────────────────────────────
+  const formatSelect = document.getElementById('opt-format');
+  const pdfWarning = document.getElementById('pdf-warning');
+  formatSelect.addEventListener('change', () => {
+    pdfWarning.classList.toggle('d-none', formatSelect.value !== 'pdf');
   });
 
   // ── 파일 드래그&드롭 ──────────────────────────────────────────────────────

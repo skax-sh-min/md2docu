@@ -39,7 +39,8 @@ public class ImageResolver {
         }
 
         if (basePath != null) {
-            Path imagePath = basePath.resolve(src).normalize();
+            String relativeSrc = src.startsWith("/") ? src.substring(1) : src;
+            Path imagePath = basePath.resolve(relativeSrc).normalize();
             if (!imagePath.startsWith(basePath)) {
                 warnings.add(ConvertWarning.imageNotFound(src));
                 return null;

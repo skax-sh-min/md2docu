@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
 public class PdfConverter {
 
     private static final Pattern IMG_PATTERN =
-        Pattern.compile("<img(\\s[^>]*?)\\ssrc=\"([^\"]+)\"([^>]*?)/?>");
+        Pattern.compile("<img([^>]*?)\\ssrc=\"([^\"]+)\"([^>]*?)/?>");
 
     private final ImageResolver imageResolver;
 

@@ -204,11 +204,18 @@ System.out.println("Hello, md2docu!");
     });
   });
 
-  // ── PDF 경고 ──────────────────────────────────────────────────────────────
+  // ── PDF 경고 (macOS/Linux 서버에서만 표시) ───────────────────────────────
   const formatSelect = document.getElementById('opt-format');
   const pdfWarning = document.getElementById('pdf-warning');
+  let pdfKoreanWarning = false;
+
+  fetch('/api/system/info')
+    .then(r => r.json())
+    .then(info => { pdfKoreanWarning = info.pdfKoreanWarning; })
+    .catch(() => {});
+
   formatSelect.addEventListener('change', () => {
-    pdfWarning.classList.toggle('d-none', formatSelect.value !== 'pdf');
+    pdfWarning.classList.toggle('d-none', !(pdfKoreanWarning && formatSelect.value === 'pdf'));
   });
 
   // ── 파일 드래그&드롭 ──────────────────────────────────────────────────────

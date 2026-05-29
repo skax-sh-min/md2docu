@@ -98,6 +98,17 @@ public class ConvertController {
     }
 
     /**
+     * 서버 플랫폼 정보
+     * GET /api/system/info
+     */
+    @GetMapping("/system/info")
+    public ResponseEntity<Map<String, Object>> systemInfo() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        boolean pdfKoreanWarning = !os.contains("win");
+        return ResponseEntity.ok(Map.of("pdfKoreanWarning", pdfKoreanWarning));
+    }
+
+    /**
      * Markdown HTML 미리보기
      * POST /api/preview
      */

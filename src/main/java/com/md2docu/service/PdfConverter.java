@@ -41,9 +41,10 @@ public class PdfConverter {
         PdfRendererBuilder builder = new PdfRendererBuilder();
         builder.useFastMode();
 
-        // 한글 폰트: Windows Malgun Gothic, Linux NotoSansCJK
+        // Windows: Malgun Gothic
         tryAddFont(builder, "C:/Windows/Fonts/malgun.ttf", "Malgun Gothic");
         tryAddFont(builder, "C:/Windows/Fonts/malgunbd.ttf", "Malgun Gothic");
+        // Linux: Noto Sans CJK
         tryAddFont(builder, "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", "Noto Sans CJK");
 
         builder.withW3cDocument(new W3CDom().fromJsoup(jsoupDoc), "/");
@@ -126,10 +127,13 @@ public class PdfConverter {
                   line-height: 1.6;
                   color: #333;
                 }
-                h1 { font-size: 22pt; border-bottom: 2px solid #333; padding-bottom: 4px; margin-top: 20pt; }
-                h2 { font-size: 18pt; border-bottom: 1px solid #ccc; padding-bottom: 2px; margin-top: 16pt; }
-                h3 { font-size: 14pt; margin-top: 12pt; }
-                h4, h5, h6 { font-size: 12pt; }
+                p { margin: 0 0 8pt 0; }
+                h1 { font-size: 22pt; border-bottom: 2px solid #333; padding-bottom: 4px; margin: 28pt 0 20pt 0; }
+                h2 { font-size: 18pt; border-bottom: 1px solid #ccc; padding-bottom: 2px; margin: 24pt 0 12pt 0; }
+                h3 { font-size: 14pt; margin: 20pt 0 10pt 0; }
+                h4, h5, h6 { font-size: 12pt; margin: 16pt 0 8pt 0; }
+                .toc { margin: 20pt 0 28pt 0; padding: 12pt 16pt; border: 1px solid #ddd; background: #f9f9f9; }
+                .toc-item { margin: 3pt 0; line-height: 1.6; }
                 pre {
                   background: #f5f5f5;
                   border: 1px solid #ddd;

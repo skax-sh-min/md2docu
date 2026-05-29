@@ -10,6 +10,8 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Node;
 import org.jsoup.nodes.TextNode;
+import org.apache.xmlbeans.XmlCursor;
+import org.apache.xmlbeans.XmlObject;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
 import org.springframework.stereotype.Service;
 
@@ -19,6 +21,7 @@ import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class DocxConverter {
@@ -33,8 +36,9 @@ public class DocxConverter {
         XWPFDocument doc = new XWPFDocument();
         setupDefaultStyles(doc);
 
+        int[] bkId = {0};
         Document jsoupDoc = Jsoup.parse(html);
-        processBlockNodes(doc, jsoupDoc.body().childNodes(), options, basePath, warnings);
+        processBlockNodes(doc, jsoupDoc.body().childNodes(), options, basePath, warnings, bkId);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         doc.write(out);
@@ -45,7 +49,7 @@ public class DocxConverter {
     // ── 블록 요소 처리 ────────────────────────────────────────────────────────
 
     private void processBlockNodes(XWPFDocument doc, List<Node> nodes,
-                                   ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
+                                   ConvertOptions options, Path basePath, List<ConvertWarning> warnings, int[] bkId) {
         for (Node node : nodes) {
             if (node instanceof TextNode tn) {
                 String text = tn.text().trim();
@@ -54,35 +58,39 @@ public class DocxConverter {
                     p.createRun().setText(text);
                 }
             } else if (node instanceof Element el) {
-                processBlockElement(doc, el, options, basePath, warnings);
+                processBlockElement(doc, el, options, basePath, warnings, bkId);
             }
         }
     }
 
     private void processBlockElement(XWPFDocument doc, Element el,
-                                     ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
+                                     ConvertOptions options, Path basePath, List<ConvertWarning> warnings, int[] bkId) {
         switch (el.tagName()) {
-            case "h1" -> addHeading(doc, el, 1);
-            case "h2" -> addHeading(doc, el, 2);
-            case "h3" -> addHeading(doc, el, 3);
-            case "h4" -> addHeading(doc, el, 4);
-            case "h5" -> addHeading(doc, el, 5);
-            case "h6" -> addHeading(doc, el, 6);
+            case "h1" -> addHeading(doc, el, 1, bkId);
+            case "h2" -> addHeading(doc, el, 2, bkId);
+            case "h3" -> addHeading(doc, el, 3, bkId);
+            case "h4" -> addHeading(doc, el, 4, bkId);
+            case "h5" -> addHeading(doc, el, 5, bkId);
+            case "h6" -> addHeading(doc, el, 6, bkId);
             case "p"  -> {
                 XWPFParagraph p = doc.createParagraph();
+                p.setSpacingBetween(1.6);
+                p.setSpacingAfter(80);
                 processInlineNodes(doc, p, el.childNodes(), options, basePath, warnings, new RunState());
             }
             case "pre" -> addCodeBlock(doc, el);
-            case "ul" -> addList(doc, el, false, options, basePath, warnings);
-            case "ol" -> addList(doc, el, true, options, basePath, warnings);
+            case "ul" -> addList(doc, el, false, 1, options, basePath, warnings);
+            case "ol" -> addList(doc, el, true, 1, options, basePath, warnings);
             case "blockquote" -> addBlockquote(doc, el, options, basePath, warnings);
             case "table" -> addTable(doc, el, options, basePath, warnings);
             case "hr" -> addHorizontalLine(doc);
             case "img" -> addImageParagraph(doc, el, options, basePath, warnings);
             default -> {
-                // div, section 등 — 자식을 재귀 처리
                 if (!el.childNodes().isEmpty()) {
-                    processBlockNodes(doc, el.childNodes(), options, basePath, warnings);
+                    boolean isToc = el.hasClass("toc");
+                    if (isToc) addSpacerParagraph(doc, 200);
+                    processBlockNodes(doc, el.childNodes(), options, basePath, warnings, bkId);
+                    if (isToc) addSpacerParagraph(doc, 280);
                 }
             }
         }
@@ -142,26 +150,52 @@ public class DocxConverter {
 
     // ── 제목 ──────────────────────────────────────────────────────────────────
 
-    private void addHeading(XWPFDocument doc, Element el, int level) {
+    private void addHeading(XWPFDocument doc, Element el, int level, int[] bkId) {
         XWPFParagraph p = doc.createParagraph();
-        p.setSpacingBefore(200);
-        p.setSpacingAfter(100);
+        p.setSpacingBefore(280);
+        p.setSpacingAfter(120);
+        p.setSpacingBetween(1.6);
 
         int[] sizes = {28, 24, 20, 16, 14, 12};
         int size = sizes[Math.min(level - 1, 5)];
 
-        XWPFRun run = p.createRun();
-        run.setBold(true);
-        run.setFontSize(size);
-        run.setText(el.text());
-
-        // h1, h2 에 하단 경계선 효과 (다음 단락과 구분)
         if (level <= 2) {
             CTBorder bottom = p.getCTP().addNewPPr().addNewPBdr().addNewBottom();
             bottom.setVal(STBorder.SINGLE);
             bottom.setSz(BigInteger.valueOf(level == 1 ? 8 : 4));
             bottom.setColor("CCCCCC");
         }
+
+        String id = el.attr("id");
+        if (!id.isEmpty()) {
+            int bid = bkId[0]++;
+            insertWmlElement(p, String.format(
+                "<w:bookmarkStart xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"" +
+                " w:id=\"%d\" w:name=\"%s\"/>", bid, id));
+            XWPFRun run = p.createRun();
+            run.setBold(true);
+            run.setFontSize(size);
+            run.setText(el.text());
+            insertWmlElement(p, String.format(
+                "<w:bookmarkEnd xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"" +
+                " w:id=\"%d\"/>", bid));
+        } else {
+            XWPFRun run = p.createRun();
+            run.setBold(true);
+            run.setFontSize(size);
+            run.setText(el.text());
+        }
+    }
+
+    private void insertWmlElement(XWPFParagraph p, String xmlFragment) {
+        try {
+            XmlObject obj = XmlObject.Factory.parse(xmlFragment);
+            try (XmlCursor src = obj.newCursor(); XmlCursor dst = p.getCTP().newCursor()) {
+                src.toFirstContentToken();
+                dst.toEndToken();
+                src.moveXml(dst);
+            }
+        } catch (Exception ignored) {}
     }
 
     // ── 코드 블록 ─────────────────────────────────────────────────────────────
@@ -185,18 +219,27 @@ public class DocxConverter {
 
     // ── 목록 ──────────────────────────────────────────────────────────────────
 
-    private void addList(XWPFDocument doc, Element listEl, boolean ordered,
+    private void addList(XWPFDocument doc, Element listEl, boolean ordered, int depth,
                          ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
         int index = 1;
         for (Element li : listEl.select("> li")) {
             XWPFParagraph p = doc.createParagraph();
-            p.setIndentationLeft(720);
+            p.setIndentationLeft(720 * depth);
+            p.setSpacingBetween(1.6);
+            p.setSpacingAfter(40);
 
             String prefix = ordered ? (index++) + ". " : "• ";
-            XWPFRun run = p.createRun();
-            run.setText(prefix);
+            p.createRun().setText(prefix);
 
-            processInlineNodes(doc, p, li.childNodes(), options, basePath, warnings, new RunState());
+            List<Node> inlineNodes = li.childNodes().stream()
+                .filter(n -> !(n instanceof Element e &&
+                               (e.tagName().equals("ul") || e.tagName().equals("ol"))))
+                .collect(Collectors.toList());
+            processInlineNodes(doc, p, inlineNodes, options, basePath, warnings, new RunState());
+
+            for (Element nested : li.select("> ul, > ol")) {
+                addList(doc, nested, nested.tagName().equals("ol"), depth + 1, options, basePath, warnings);
+            }
         }
     }
 
@@ -250,6 +293,11 @@ public class DocxConverter {
                 }
             }
         }
+    }
+
+    private void addSpacerParagraph(XWPFDocument doc, int spacingAfter) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setSpacingAfter(spacingAfter);
     }
 
     // ── 수평선 ────────────────────────────────────────────────────────────────
@@ -334,8 +382,20 @@ public class DocxConverter {
                 applyRun(para, text + " (" + href + ")", state);
             }
         } else if (href.startsWith("#")) {
-            // 내부 앵커 — 일반 텍스트로 처리
-            applyRun(para, text, state.withColor("0563C1"));
+            try {
+                CTHyperlink link = para.getCTP().addNewHyperlink();
+                link.setAnchor(href.substring(1));
+                CTR ctr = link.addNewR();
+                CTRPr rpr = ctr.addNewRPr();
+                CTColor color = rpr.addNewColor();
+                color.setVal("0563C1");
+                rpr.addNewU().setVal(STUnderline.SINGLE);
+                if (state.bold) rpr.addNewB();
+                if (state.italic) rpr.addNewI();
+                ctr.addNewT().setStringValue(text);
+            } catch (Exception e) {
+                applyRun(para, text, state.withColor("0563C1"));
+            }
         } else {
             // 로컬 파일 링크
             if ("warn".equals(options.getLinkStrategy())) {

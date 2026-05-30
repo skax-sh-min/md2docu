@@ -34,7 +34,7 @@ public class DocxConverter {
 
     public byte[] convert(String html, ConvertOptions options, Path basePath, List<ConvertWarning> warnings) throws IOException {
         XWPFDocument doc = new XWPFDocument();
-        setupDefaultStyles(doc);
+        setupDefaultStyles(doc, options);
 
         int[] bkId = {0};
         Document jsoupDoc = Jsoup.parse(html);
@@ -409,16 +409,22 @@ public class DocxConverter {
 
     // ── 기본 스타일 ──────────────────────────────────────────────────────────
 
-    private void setupDefaultStyles(XWPFDocument doc) {
+    private void setupDefaultStyles(XWPFDocument doc, ConvertOptions options) {
         CTDocument1 docBody = doc.getDocument();
         CTBody body = docBody.getBody();
         if (body.isSetSectPr()) return;
 
         CTSectPr sectPr = body.addNewSectPr();
         CTPageSz pgSz = sectPr.addNewPgSz();
-        // A4: 11906 x 16838 twips
-        pgSz.setW(BigInteger.valueOf(11906));
-        pgSz.setH(BigInteger.valueOf(16838));
+        if ("LETTER".equalsIgnoreCase(options.getPageSize())) {
+            // Letter: 12240 x 15840 twips (8.5 x 11 in)
+            pgSz.setW(BigInteger.valueOf(12240));
+            pgSz.setH(BigInteger.valueOf(15840));
+        } else {
+            // A4: 11906 x 16838 twips
+            pgSz.setW(BigInteger.valueOf(11906));
+            pgSz.setH(BigInteger.valueOf(16838));
+        }
 
         CTPageMar pgMar = sectPr.addNewPgMar();
         pgMar.setTop(BigInteger.valueOf(1134));

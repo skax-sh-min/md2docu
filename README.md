@@ -151,6 +151,24 @@ curl http://localhost:8080/api/system/info
 | `warn` | 로컬 파일 링크에 `[⚠ 첨부파일 미포함]` 경고 표시 + warnings 반환 |
 | `ignore` | 링크 제거, 텍스트만 출력 |
 
+## 파일 크기 제한
+
+| 항목 | 기본값 | 설정 키 |
+|------|--------|---------|
+| 업로드 파일 최대 크기 | 200MB | `spring.servlet.multipart.max-file-size` |
+| HTTP 요청 최대 크기 | 210MB | `spring.servlet.multipart.max-request-size` |
+| ZIP 압축 해제 최대 크기 | 350MB | `app.zip.max-extract-bytes` |
+
+> 이미지가 포함된 ZIP의 경우 업로드 크기 제한을 늘릴 수 있습니다.  
+> `application.properties` 또는 실행 시 인수로 조정하세요.
+
+```bash
+java -jar md2docu.jar \
+  --spring.servlet.multipart.max-file-size=200MB \
+  --spring.servlet.multipart.max-request-size=200MB \
+  --app.zip.max-extract-bytes=367001600
+```
+
 ## 이미지 처리
 
 | 이미지 유형 | 처리 방식 |

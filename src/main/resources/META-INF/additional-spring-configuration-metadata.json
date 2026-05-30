@@ -8,7 +8,7 @@
     {
       "name": "app.zip.max-extract-bytes",
       "type": "java.lang.Long",
-      "description": "ZIP 압축 해제 최대 허용 크기 (바이트). 기본값: 209715200 (200MB)"
+      "description": "ZIP 압축 해제 최대 허용 크기 (바이트). 기본값: 367001600 (350MB)"
     }
   ]
 }

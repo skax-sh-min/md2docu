@@ -1,0 +1,14 @@
+{
+  "properties": [
+    {
+      "name": "app.convert.temp-expiry-seconds",
+      "type": "java.lang.Long",
+      "description": "변환 결과 임시 파일 보관 시간 (초). 기본값: 3600"
+    },
+    {
+      "name": "app.zip.max-extract-bytes",
+      "type": "java.lang.Long",
+      "description": "ZIP 압축 해제 최대 허용 크기 (바이트). 기본값: 209715200 (200MB)"
+    }
+  ]
+}

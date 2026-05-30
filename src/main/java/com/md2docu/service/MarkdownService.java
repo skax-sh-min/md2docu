@@ -91,7 +91,7 @@ public class MarkdownService {
             String anchorId = "toc-" + (i + 1);
             tocHtml.append(String.format(
                 "<p class=\"toc-item toc-l%d\">%s<a href=\"#%s\">%s %s</a></p>\n",
-                lv, indent, anchorId, numbers.get(i), texts.get(i)));
+                lv, indent, anchorId, numbers.get(i), escapeHtml(texts.get(i))));
         }
         tocHtml.append("</div>");
 
@@ -126,7 +126,7 @@ public class MarkdownService {
                     int idx = lineToIdx.get(i);
                     int lv = levels.get(idx);
                     String anchorId = "toc-" + (idx + 1);
-                    String numberedText = numbers.get(idx) + " " + texts.get(idx);
+                    String numberedText = numbers.get(idx) + " " + escapeHtml(texts.get(idx));
                     sb.append(String.format("<h%d id=\"%s\">%s</h%d>\n", lv, anchorId, numberedText, lv));
                 } else {
                     sb.append(line).append("\n");
@@ -169,5 +169,9 @@ public class MarkdownService {
         while (n < line.length() && line.charAt(n) == '#') n++;
         if (n == 0 || n > 6) return 0;
         return (n < line.length() && line.charAt(n) == ' ') ? n : 0;
+    }
+
+    private String escapeHtml(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 }

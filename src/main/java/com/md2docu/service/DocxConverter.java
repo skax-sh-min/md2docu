@@ -15,6 +15,7 @@ import org.apache.xmlbeans.XmlObject;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
 import org.springframework.stereotype.Service;
 
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -22,6 +23,7 @@ import java.math.BigInteger;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.Collectors;
+import javax.imageio.ImageIO;
 
 @Service
 public class DocxConverter {
@@ -337,13 +339,26 @@ public class DocxConverter {
                 return;
             }
             int pictureType = imageResolver.detectPictureType(src);
+            int[] emu = calcImageEmu(bytes);
             XWPFRun run = para.createRun();
-            // 최대 너비 400pt, 자동 비율
-            run.addPicture(new ByteArrayInputStream(bytes), pictureType, src,
-                Units.toEMU(400), Units.toEMU(300));
+            run.addPicture(new ByteArrayInputStream(bytes), pictureType, src, emu[0], emu[1]);
         } catch (Exception e) {
             para.createRun().setText("[이미지 삽입 오류: " + src + "]");
         }
+    }
+
+    // 이미지 픽셀 → EMU 변환: 최대 400pt 너비/550pt 높이에 비율 유지
+    private int[] calcImageEmu(byte[] bytes) {
+        try {
+            BufferedImage img = ImageIO.read(new ByteArrayInputStream(bytes));
+            if (img != null && img.getWidth() > 0 && img.getHeight() > 0) {
+                double wPt = img.getWidth() * 0.75;   // 96dpi → pt (×72/96)
+                double hPt = img.getHeight() * 0.75;
+                double scale = Math.min(1.0, Math.min(400.0 / wPt, 550.0 / hPt));
+                return new int[]{Units.toEMU((int)(wPt * scale)), Units.toEMU((int)(hPt * scale))};
+            }
+        } catch (Exception ignored) {}
+        return new int[]{Units.toEMU(400), Units.toEMU(300)};
     }
 
     // ── 하이퍼링크 ────────────────────────────────────────────────────────────

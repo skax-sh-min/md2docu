@@ -33,17 +33,17 @@ mvn spring-boot:run
 ### JAR 빌드 및 실행
 
 ```bash
-# 빌드 (target/md2docu-0.0.1-SNAPSHOT.jar 생성)
+# 빌드 (target/md2docu-0.1.1-SNAPSHOT.jar 생성)
 mvn package -DskipTests
 
 # 실행
-java -jar target/md2docu-0.0.1-SNAPSHOT.jar
+java -jar target/md2docu-0.1.1-SNAPSHOT.jar
 ```
 
 포트를 변경하려면:
 
 ```bash
-java -jar target/md2docu-0.0.1-SNAPSHOT.jar --server.port=9090
+java -jar target/md2docu-0.1.1-SNAPSHOT.jar --server.port=9090
 ```
 
 서버가 시작되면 http://localhost:8080 에서 웹 UI를 이용할 수 있습니다.

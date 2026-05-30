@@ -15,15 +15,24 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api")
 public class ConvertController {
 
+    private static final Set<String> VALID_FORMATS = Set.of("pdf", "docx");
+
     private final ConvertService convertService;
 
     public ConvertController(ConvertService convertService) {
         this.convertService = convertService;
+    }
+
+    private void requireValidFormat(String format) throws IOException {
+        if (!VALID_FORMATS.contains(format.toLowerCase())) {
+            throw new IOException("지원하지 않는 변환 형식입니다: " + format + " (지원: pdf, docx)");
+        }
     }
 
     /**
@@ -40,6 +49,7 @@ public class ConvertController {
             @RequestParam(defaultValue = "5000") int remoteImageTimeout,
             @RequestParam(defaultValue = "false") boolean generateToc) throws IOException {
 
+        requireValidFormat(format);
         ConvertOptions options = buildOptions(pageSize, includeImages, linkStrategy, remoteImageTimeout, generateToc);
         ConvertResult result = convertService.convertFile(file, format, options);
 
@@ -60,6 +70,7 @@ public class ConvertController {
             @PathVariable String format,
             @RequestBody Map<String, Object> body) throws IOException {
 
+        requireValidFormat(format);
         String markdown = (String) body.getOrDefault("markdown", "");
         ConvertOptions options = new ConvertOptions();
         if (body.containsKey("pageSize"))          options.setPageSize((String) body.get("pageSize"));

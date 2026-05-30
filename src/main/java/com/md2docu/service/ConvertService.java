@@ -4,6 +4,8 @@ import com.md2docu.model.ConvertOptions;
 import com.md2docu.model.ConvertResult;
 import com.md2docu.model.ConvertWarning;
 import com.md2docu.util.ZipExtractor;
+import org.jsoup.Jsoup;
+import org.jsoup.safety.Safelist;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -127,7 +129,13 @@ public class ConvertService {
     // ── 미리보기 ─────────────────────────────────────────────────────────────
 
     public String preview(String markdown) {
-        return markdownService.toHtml(markdown, false);
+        String html = markdownService.toHtml(markdown, false);
+        return Jsoup.clean(html, Safelist.relaxed()
+            .addTags("div", "span", "hr", "del")
+            .addAttributes("div", "class")
+            .addAttributes("span", "class")
+            .addAttributes("p", "class")
+            .addAttributes("a", "class"));
     }
 
     // ── 만료된 결과 정리 (1시간마다) ─────────────────────────────────────────

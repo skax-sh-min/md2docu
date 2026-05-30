@@ -93,7 +93,7 @@ public class PdfConverter {
         }
         if ("warn".equals(options.getLinkStrategy())) {
             // 로컬 파일 링크에 경고 표시 추가
-            Pattern localLink = Pattern.compile("<a\\s[^>]*?href=\"(?!http)(.*?)\"[^>]*?>(.*?)</a>");
+            Pattern localLink = Pattern.compile("<a\\s[^>]*?href=\"(?!https?://)(?!#)(.*?)\"[^>]*?>(.*?)</a>");
             Matcher m = localLink.matcher(html);
             StringBuilder sb = new StringBuilder();
             while (m.find()) {

@@ -325,7 +325,12 @@ System.out.println("Hello, md2docu!");
     const warnings = data.warnings || [];
     if (warnings.length > 0) {
       const list = document.getElementById('warning-list');
-      list.innerHTML = warnings.map(w => `<li>${w.message}</li>`).join('');
+      list.innerHTML = '';
+      warnings.forEach(w => {
+        const li = document.createElement('li');
+        li.textContent = w.message;
+        list.appendChild(li);
+      });
       document.getElementById('warning-box').style.display = '';
     }
   }

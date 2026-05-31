@@ -3,8 +3,11 @@ package com.md2docu.util;
 import com.md2docu.model.ConvertWarning;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -61,11 +64,14 @@ public class ImageResolver {
 
     private byte[] fetchRemote(String url, List<ConvertWarning> warnings, int timeout) {
         try {
+            validateRemoteUrl(url);
             HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setInstanceFollowRedirects(false);
             conn.setConnectTimeout(timeout);
             conn.setReadTimeout(timeout);
             conn.setRequestProperty("User-Agent", "md2docu/1.0");
-            if (conn.getResponseCode() == 200) {
+            int status = conn.getResponseCode();
+            if (status == 200) {
                 try (InputStream is = conn.getInputStream()) {
                     return is.readAllBytes();
                 }
@@ -75,6 +81,14 @@ public class ImageResolver {
         } catch (Exception e) {
             warnings.add(ConvertWarning.imageFetchFailed(url));
             return null;
+        }
+    }
+
+    private void validateRemoteUrl(String url) throws IOException {
+        InetAddress addr = InetAddress.getByName(URI.create(url).getHost());
+        if (addr.isLoopbackAddress() || addr.isSiteLocalAddress()
+                || addr.isLinkLocalAddress() || addr.isAnyLocalAddress()) {
+            throw new IOException("내부 네트워크 주소로의 요청은 허용되지 않습니다: " + url);
         }
     }
 

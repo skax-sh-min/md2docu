@@ -23,6 +23,7 @@ public class ConvertController {
 
     private static final Set<String> VALID_FORMATS = Set.of("pdf", "docx");
     private static final Set<String> VALID_PAGE_SIZES = Set.of("A4", "LETTER");
+    private static final Set<String> VALID_LINK_STRATEGIES = Set.of("keep", "warn", "ignore");
 
     private final ConvertService convertService;
 
@@ -42,6 +43,12 @@ public class ConvertController {
         }
     }
 
+    private void requireValidLinkStrategy(String strategy) throws IOException {
+        if (!VALID_LINK_STRATEGIES.contains(strategy.toLowerCase())) {
+            throw new IOException("지원하지 않는 링크 전략입니다: " + strategy + " (지원: keep, warn, ignore)");
+        }
+    }
+
     /**
      * 파일(md 또는 zip) 업로드 → 변환
      * POST /api/convert/pdf  or  /api/convert/docx
@@ -58,6 +65,7 @@ public class ConvertController {
 
         requireValidFormat(format);
         requireValidPageSize(pageSize);
+        requireValidLinkStrategy(linkStrategy);
         ConvertOptions options = buildOptions(pageSize, includeImages, linkStrategy, remoteImageTimeout, generateToc);
         ConvertResult result = convertService.convertFile(file, format, options);
 
@@ -87,7 +95,11 @@ public class ConvertController {
             options.setPageSize(pageSize);
         }
         if (body.containsKey("includeImages"))     options.setIncludeImages((Boolean) body.get("includeImages"));
-        if (body.containsKey("linkStrategy"))      options.setLinkStrategy((String) body.get("linkStrategy"));
+        if (body.containsKey("linkStrategy")) {
+            String linkStrategy = (String) body.get("linkStrategy");
+            requireValidLinkStrategy(linkStrategy);
+            options.setLinkStrategy(linkStrategy);
+        }
         if (body.containsKey("generateToc"))       options.setGenerateToc((Boolean) body.get("generateToc"));
 
         ConvertResult result = convertService.convertText(markdown, format, options);
@@ -164,7 +176,7 @@ public class ConvertController {
         opts.setPageSize(pageSize);
         opts.setIncludeImages(includeImages);
         opts.setLinkStrategy(linkStrategy);
-        opts.setRemoteImageTimeout(remoteImageTimeout);
+        opts.setRemoteImageTimeout(Math.max(1_000, Math.min(30_000, remoteImageTimeout)));
         opts.setGenerateToc(generateToc);
         return opts;
     }

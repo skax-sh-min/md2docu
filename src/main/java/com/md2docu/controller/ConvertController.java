@@ -22,6 +22,7 @@ import java.util.Set;
 public class ConvertController {
 
     private static final Set<String> VALID_FORMATS = Set.of("pdf", "docx");
+    private static final Set<String> VALID_PAGE_SIZES = Set.of("A4", "LETTER");
 
     private final ConvertService convertService;
 
@@ -32,6 +33,12 @@ public class ConvertController {
     private void requireValidFormat(String format) throws IOException {
         if (!VALID_FORMATS.contains(format.toLowerCase())) {
             throw new IOException("지원하지 않는 변환 형식입니다: " + format + " (지원: pdf, docx)");
+        }
+    }
+
+    private void requireValidPageSize(String pageSize) throws IOException {
+        if (!VALID_PAGE_SIZES.contains(pageSize.toUpperCase())) {
+            throw new IOException("지원하지 않는 페이지 크기입니다: " + pageSize + " (지원: A4, LETTER)");
         }
     }
 
@@ -50,6 +57,7 @@ public class ConvertController {
             @RequestParam(defaultValue = "false") boolean generateToc) throws IOException {
 
         requireValidFormat(format);
+        requireValidPageSize(pageSize);
         ConvertOptions options = buildOptions(pageSize, includeImages, linkStrategy, remoteImageTimeout, generateToc);
         ConvertResult result = convertService.convertFile(file, format, options);
 
@@ -73,7 +81,11 @@ public class ConvertController {
         requireValidFormat(format);
         String markdown = (String) body.getOrDefault("markdown", "");
         ConvertOptions options = new ConvertOptions();
-        if (body.containsKey("pageSize"))          options.setPageSize((String) body.get("pageSize"));
+        if (body.containsKey("pageSize")) {
+            String pageSize = (String) body.get("pageSize");
+            requireValidPageSize(pageSize);
+            options.setPageSize(pageSize);
+        }
         if (body.containsKey("includeImages"))     options.setIncludeImages((Boolean) body.get("includeImages"));
         if (body.containsKey("linkStrategy"))      options.setLinkStrategy((String) body.get("linkStrategy"));
         if (body.containsKey("generateToc"))       options.setGenerateToc((Boolean) body.get("generateToc"));

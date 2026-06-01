@@ -171,9 +171,11 @@ public class DocxConverter {
         String id = el.attr("id");
         if (!id.isEmpty()) {
             int bid = bkId[0]++;
+            String safeId = id.replace("&", "&amp;").replace("\"", "&quot;")
+                              .replace("<", "&lt;").replace(">", "&gt;");
             insertWmlElement(p, String.format(
                 "<w:bookmarkStart xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"" +
-                " w:id=\"%d\" w:name=\"%s\"/>", bid, id));
+                " w:id=\"%d\" w:name=\"%s\"/>", bid, safeId));
             XWPFRun run = p.createRun();
             run.setBold(true);
             run.setFontSize(size);

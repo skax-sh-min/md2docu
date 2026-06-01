@@ -7,6 +7,7 @@ import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import org.jsoup.Jsoup;
 import org.jsoup.helper.W3CDom;
 import org.jsoup.nodes.Document;
+import org.jsoup.safety.Safelist;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
@@ -30,7 +31,8 @@ public class PdfConverter {
     }
 
     public byte[] convert(String html, ConvertOptions options, Path basePath, List<ConvertWarning> warnings) throws IOException {
-        String processed = processImages(html, options, basePath, warnings);
+        String sanitized = sanitizeForPdf(html);
+        String processed = processImages(sanitized, options, basePath, warnings);
         String processedLinks = processLinks(processed, options, warnings);
         String fullHtml = wrapHtml(processedLinks, options);
 
@@ -47,11 +49,24 @@ public class PdfConverter {
         // Linux: Noto Sans CJK
         tryAddFont(builder, "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", "Noto Sans CJK");
 
+        builder.useUriResolver((baseUri, uri) -> {
+            if (uri == null) return null;
+            String lower = uri.toLowerCase();
+            if (lower.startsWith("file:") || lower.startsWith("jar:")) return null;
+            return uri;
+        });
+
         builder.withW3cDocument(new W3CDom().fromJsoup(jsoupDoc), "/");
         builder.toStream(out);
         builder.run();
 
         return out.toByteArray();
+    }
+
+    private String sanitizeForPdf(String html) {
+        return Jsoup.clean(html, Safelist.relaxed()
+            .addTags("div", "span", "hr", "del", "table", "thead", "tbody", "tr", "th", "td")
+            .addAttributes(":all", "class", "id"));
     }
 
     private void tryAddFont(PdfRendererBuilder builder, String path, String family) {

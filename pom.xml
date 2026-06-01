@@ -38,17 +38,16 @@
             <version>0.64.8</version>
         </dependency>
 
-        <!-- PDF generation (openhtmltopdf + PDFBox) -->
+        <!-- PDF generation (openhtmltopdf community fork + PDFBox) -->
         <dependency>
-            <groupId>com.openhtmltopdf</groupId>
+            <groupId>io.github.openhtmltopdf</groupId>
             <artifactId>openhtmltopdf-pdfbox</artifactId>
-            <version>1.0.10</version>
+            <version>1.1.37</version>
         </dependency>
         <dependency>
             <groupId>io.github.openhtmltopdf</groupId>
             <artifactId>openhtmltopdf-svg-support</artifactId>
             <version>1.1.37</version>
-            <scope>compile</scope>
         </dependency>
 
         <!-- DOCX generation -->

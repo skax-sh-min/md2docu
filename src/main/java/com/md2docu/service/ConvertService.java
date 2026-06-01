@@ -68,11 +68,8 @@ public class ConvertService {
         Path basePath = extraction.baseDir();
         Path mdFile = extraction.mainMdFile();
 
-        if (mdFile == null) {
-            throw new IOException("ZIP 파일 안에 .md 파일이 없습니다.");
-        }
-
         try {
+            if (mdFile == null) throw new IOException("ZIP 파일 안에 .md 파일이 없습니다.");
             String markdown = Files.readString(mdFile);
             return convertMarkdown(markdown, format, options, basePath, baseName(mdFile.getFileName().toString()));
         } finally {

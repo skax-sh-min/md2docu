@@ -24,31 +24,34 @@ public class ZipExtractor {
 
     public ExtractionResult extract(byte[] zipBytes) throws IOException {
         Path tempDir = Files.createTempDirectory("md2docu-");
-
-        try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
-            ZipEntry entry;
-            long totalBytes = 0;
-            while ((entry = zis.getNextEntry()) != null) {
-                if (entry.isDirectory()) {
+        try {
+            try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
+                ZipEntry entry;
+                long totalBytes = 0;
+                while ((entry = zis.getNextEntry()) != null) {
+                    if (entry.isDirectory()) {
+                        zis.closeEntry();
+                        continue;
+                    }
+                    Path outPath = tempDir.resolve(entry.getName()).normalize();
+                    // ZIP Slip 방지
+                    if (!outPath.startsWith(tempDir)) {
+                        zis.closeEntry();
+                        continue;
+                    }
+                    Files.createDirectories(outPath.getParent());
+                    byte[] data = readLimited(zis, maxExtractBytes - totalBytes);
+                    totalBytes += data.length;
+                    Files.write(outPath, data);
                     zis.closeEntry();
-                    continue;
                 }
-                Path outPath = tempDir.resolve(entry.getName()).normalize();
-                // ZIP Slip 방지
-                if (!outPath.startsWith(tempDir)) {
-                    zis.closeEntry();
-                    continue;
-                }
-                Files.createDirectories(outPath.getParent());
-                byte[] data = readLimited(zis, maxExtractBytes - totalBytes);
-                totalBytes += data.length;
-                Files.write(outPath, data);
-                zis.closeEntry();
             }
+            Path mainMd = findMainMdFile(tempDir);
+            return new ExtractionResult(tempDir, mainMd);
+        } catch (IOException e) {
+            cleanup(tempDir);
+            throw e;
         }
-
-        Path mainMd = findMainMdFile(tempDir);
-        return new ExtractionResult(tempDir, mainMd);
     }
 
     private byte[] readLimited(ZipInputStream zis, long remaining) throws IOException {

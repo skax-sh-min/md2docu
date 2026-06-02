@@ -32,10 +32,17 @@
         </dependency>
 
         <!-- Markdown parser -->
+        <!-- flexmark-pdf-converter는 구버전 com.openhtmltopdf:1.0.10을 끌어오므로 제외 -->
         <dependency>
             <groupId>com.vladsch.flexmark</groupId>
             <artifactId>flexmark-all</artifactId>
             <version>0.64.8</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.vladsch.flexmark</groupId>
+                    <artifactId>flexmark-pdf-converter</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- PDF generation (openhtmltopdf community fork + PDFBox) -->

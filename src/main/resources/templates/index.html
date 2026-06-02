@@ -29,10 +29,15 @@
       font-size: 14px;
       line-height: 1.6;
     }
-    #preview-pane h1 { font-size: 1.6rem; border-bottom: 2px solid #333; padding-bottom: 4px; margin: 20px 0 14px; }
-    #preview-pane h2 { font-size: 1.3rem; border-bottom: 1px solid #ccc; margin: 18px 0 10px; }
-    #preview-pane h3 { font-size: 1.1rem; margin: 14px 0 8px; }
-    #preview-pane h4, #preview-pane h5, #preview-pane h6 { margin: 10px 0 6px; }
+    #preview-pane { counter-reset: h2cnt h3cnt h4cnt; }
+    #preview-pane h1 { font-size: 1.6rem; margin: 20px 0 14px; counter-reset: h2cnt h3cnt h4cnt; }
+    #preview-pane h2 { font-size: 1.3rem; margin: 18px 0 10px; counter-increment: h2cnt; counter-reset: h3cnt h4cnt; }
+    #preview-pane h2::before { content: counter(h2cnt) ". "; }
+    #preview-pane h3 { font-size: 1.1rem; margin: 14px 0 8px; counter-increment: h3cnt; counter-reset: h4cnt; }
+    #preview-pane h3::before { content: counter(h2cnt) "." counter(h3cnt) " "; }
+    #preview-pane h4 { margin: 10px 0 6px; counter-increment: h4cnt; }
+    #preview-pane h4::before { content: counter(h2cnt) "." counter(h3cnt) "." counter(h4cnt) " "; }
+    #preview-pane h5, #preview-pane h6 { margin: 10px 0 6px; }
     #preview-pane p  { margin: 0 0 8px; }
     #preview-pane pre { background: #f5f5f5; padding: 10px; border-radius: 4px; overflow-x: auto; }
     #preview-pane code { background: #f0f0f0; padding: 1px 4px; border-radius: 2px; font-size: 90%; }

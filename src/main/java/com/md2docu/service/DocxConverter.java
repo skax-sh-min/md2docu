@@ -21,7 +21,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 import javax.imageio.ImageIO;
@@ -40,9 +39,8 @@ public class DocxConverter {
         setupDefaultStyles(doc, options);
 
         int[] bkId = {0};
-        int[] hc = new int[7]; // [1..6] = h1..h6 section counters
         Document jsoupDoc = Jsoup.parse(html);
-        processBlockNodes(doc, jsoupDoc.body().childNodes(), options, basePath, warnings, bkId, hc);
+        processBlockNodes(doc, jsoupDoc.body().childNodes(), options, basePath, warnings, bkId);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         doc.write(out);
@@ -54,7 +52,7 @@ public class DocxConverter {
 
     private void processBlockNodes(XWPFDocument doc, List<Node> nodes,
                                    ConvertOptions options, Path basePath, List<ConvertWarning> warnings,
-                                   int[] bkId, int[] hc) {
+                                   int[] bkId) {
         for (Node node : nodes) {
             if (node instanceof TextNode tn) {
                 String text = tn.text().trim();
@@ -63,21 +61,21 @@ public class DocxConverter {
                     p.createRun().setText(text);
                 }
             } else if (node instanceof Element el) {
-                processBlockElement(doc, el, options, basePath, warnings, bkId, hc);
+                processBlockElement(doc, el, options, basePath, warnings, bkId);
             }
         }
     }
 
     private void processBlockElement(XWPFDocument doc, Element el,
                                      ConvertOptions options, Path basePath, List<ConvertWarning> warnings,
-                                     int[] bkId, int[] hc) {
+                                     int[] bkId) {
         switch (el.tagName()) {
-            case "h1" -> addHeading(doc, el, 1, bkId, hc);
-            case "h2" -> addHeading(doc, el, 2, bkId, hc);
-            case "h3" -> addHeading(doc, el, 3, bkId, hc);
-            case "h4" -> addHeading(doc, el, 4, bkId, hc);
-            case "h5" -> addHeading(doc, el, 5, bkId, hc);
-            case "h6" -> addHeading(doc, el, 6, bkId, hc);
+            case "h1" -> addHeading(doc, el, 1, bkId);
+            case "h2" -> addHeading(doc, el, 2, bkId);
+            case "h3" -> addHeading(doc, el, 3, bkId);
+            case "h4" -> addHeading(doc, el, 4, bkId);
+            case "h5" -> addHeading(doc, el, 5, bkId);
+            case "h6" -> addHeading(doc, el, 6, bkId);
             case "p"  -> {
                 XWPFParagraph p = doc.createParagraph();
                 p.setSpacingBetween(1.2);
@@ -98,7 +96,7 @@ public class DocxConverter {
                         addSpacerParagraph(doc, 200);
                         addTocTitle(doc);
                     }
-                    processBlockNodes(doc, el.childNodes(), options, basePath, warnings, bkId, hc);
+                    processBlockNodes(doc, el.childNodes(), options, basePath, warnings, bkId);
                     if (isToc) addSpacerParagraph(doc, 280);
                 }
             }
@@ -159,7 +157,7 @@ public class DocxConverter {
 
     // ── 제목 ──────────────────────────────────────────────────────────────────
 
-    private void addHeading(XWPFDocument doc, Element el, int level, int[] bkId, int[] hc) {
+    private void addHeading(XWPFDocument doc, Element el, int level, int[] bkId) {
         XWPFParagraph p = doc.createParagraph();
         p.setSpacingBefore(280);
         p.setSpacingAfter(120);
@@ -167,7 +165,7 @@ public class DocxConverter {
 
         int[] sizes = {28, 24, 20, 16, 14, 12};
         int size = sizes[Math.min(level - 1, 5)];
-        String prefix = headingPrefix(hc, level);
+        String text = el.text();
 
         String id = el.attr("id");
         if (!id.isEmpty()) {
@@ -180,7 +178,7 @@ public class DocxConverter {
             XWPFRun run = p.createRun();
             run.setBold(true);
             run.setFontSize(size);
-            run.setText(prefix + el.text());
+            run.setText(text);
             insertWmlElement(p, String.format(
                 "<w:bookmarkEnd xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"" +
                 " w:id=\"%d\"/>", bid));
@@ -188,24 +186,8 @@ public class DocxConverter {
             XWPFRun run = p.createRun();
             run.setBold(true);
             run.setFontSize(size);
-            run.setText(prefix + el.text());
+            run.setText(text);
         }
-    }
-
-    private String headingPrefix(int[] hc, int level) {
-        if (level == 1) {
-            Arrays.fill(hc, 2, 7, 0);
-            return "";
-        }
-        hc[level]++;
-        Arrays.fill(hc, level + 1, 7, 0);
-        StringBuilder sb = new StringBuilder();
-        for (int i = 2; i <= level; i++) {
-            if (i > 2) sb.append('.');
-            sb.append(hc[i]);
-        }
-        if (level == 2) sb.append('.');
-        return sb + " ";
     }
 
     private void insertWmlElement(XWPFParagraph p, String xmlFragment) {

@@ -82,7 +82,7 @@ public class ConvertService {
     private ConvertResult convertMarkdown(String markdown, String format,
                                          ConvertOptions options, Path basePath, String baseName) throws IOException {
         List<ConvertWarning> warnings = new ArrayList<>();
-        String html = markdownService.toHtml(markdown, options.isGenerateToc());
+        String html = markdownService.toHtml(markdown, options.isGenerateToc(), options.isNumberHeadings());
 
         byte[] fileBytes;
         String contentType;
@@ -126,7 +126,7 @@ public class ConvertService {
     // ── 미리보기 ─────────────────────────────────────────────────────────────
 
     public String preview(String markdown) {
-        String html = markdownService.toHtml(markdown, false);
+        String html = markdownService.toHtml(markdown, false, false);
         return Jsoup.clean(html, Safelist.relaxed()
             .addTags("div", "span", "hr", "del")
             .addAttributes("div", "class")

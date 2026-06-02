@@ -61,12 +61,13 @@ public class ConvertController {
             @RequestParam(defaultValue = "true") boolean includeImages,
             @RequestParam(defaultValue = "keep") String linkStrategy,
             @RequestParam(defaultValue = "5000") int remoteImageTimeout,
-            @RequestParam(defaultValue = "false") boolean generateToc) throws IOException {
+            @RequestParam(defaultValue = "false") boolean generateToc,
+            @RequestParam(defaultValue = "false") boolean numberHeadings) throws IOException {
 
         requireValidFormat(format);
         requireValidPageSize(pageSize);
         requireValidLinkStrategy(linkStrategy);
-        ConvertOptions options = buildOptions(pageSize, includeImages, linkStrategy, remoteImageTimeout, generateToc);
+        ConvertOptions options = buildOptions(pageSize, includeImages, linkStrategy, remoteImageTimeout, generateToc, numberHeadings);
         ConvertResult result = convertService.convertFile(file, format, options);
 
         return ResponseEntity.ok(Map.of(
@@ -101,6 +102,7 @@ public class ConvertController {
             options.setLinkStrategy(linkStrategy);
         }
         if (body.containsKey("generateToc"))       options.setGenerateToc((Boolean) body.get("generateToc"));
+        if (body.containsKey("numberHeadings"))    options.setNumberHeadings((Boolean) body.get("numberHeadings"));
 
         ConvertResult result = convertService.convertText(markdown, format, options);
 
@@ -171,13 +173,14 @@ public class ConvertController {
     }
 
     private ConvertOptions buildOptions(String pageSize, boolean includeImages, String linkStrategy,
-                                        int remoteImageTimeout, boolean generateToc) {
+                                        int remoteImageTimeout, boolean generateToc, boolean numberHeadings) {
         ConvertOptions opts = new ConvertOptions();
         opts.setPageSize(pageSize);
         opts.setIncludeImages(includeImages);
         opts.setLinkStrategy(linkStrategy);
         opts.setRemoteImageTimeout(Math.max(1_000, Math.min(30_000, remoteImageTimeout)));
         opts.setGenerateToc(generateToc);
+        opts.setNumberHeadings(numberHeadings);
         return opts;
     }
 }

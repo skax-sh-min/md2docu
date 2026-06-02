@@ -141,22 +141,22 @@ System.out.println("Hello, md2docu!");
       <div id="pdf-warning" class="alert alert-warning py-2 mb-3 d-none">
         ⚠️ PDF는 라이브러리 한계로 <strong>한글이 깨질 수 있습니다.</strong> 한글 문서는 DOCX를 권장합니다.
       </div>
-      <div class="row g-3">
-        <div class="col-sm-3">
+      <div class="row g-3 align-items-end">
+        <div class="col-sm-2">
           <label class="form-label small">출력 형식</label>
           <select class="form-select form-select-sm" id="opt-format">
             <option value="pdf">PDF</option>
             <option value="docx" selected>DOCX</option>
           </select>
         </div>
-        <div class="col-sm-3">
+        <div class="col-sm-2">
           <label class="form-label small">페이지 크기</label>
           <select class="form-select form-select-sm" id="opt-pagesize">
             <option value="A4">A4</option>
             <option value="LETTER">Letter</option>
           </select>
         </div>
-        <div class="col-sm-3">
+        <div class="col-sm-2">
           <label class="form-label small">링크 처리 방식</label>
           <select class="form-select form-select-sm" id="opt-link">
             <option value="keep">링크 유지</option>
@@ -164,17 +164,20 @@ System.out.println("Hello, md2docu!");
             <option value="ignore">링크 텍스트만</option>
           </select>
         </div>
-        <div class="col-sm-3">
-          <label class="form-label small d-block">&nbsp;</label>
-          <div class="form-check form-check-inline">
+        <div class="col-sm-2">
+          <div class="form-check">
             <input class="form-check-input" type="checkbox" id="opt-images" checked/>
             <label class="form-check-label small" for="opt-images">이미지 포함</label>
           </div>
-          <div class="form-check form-check-inline">
+        </div>
+        <div class="col-sm-2">
+          <div class="form-check">
             <input class="form-check-input" type="checkbox" id="opt-numbering" checked/>
-            <label class="form-check-label small" for="opt-numbering">소제목 번호</label>
+            <label class="form-check-label small" for="opt-numbering">소제목 번호 생성</label>
           </div>
-          <div class="form-check form-check-inline">
+        </div>
+        <div class="col-sm-2">
+          <div class="form-check">
             <input class="form-check-input" type="checkbox" id="opt-toc" checked/>
             <label class="form-check-label small" for="opt-toc">목차 생성</label>
           </div>
@@ -272,20 +275,12 @@ System.out.println("Hello, md2docu!");
 
   // ── 소제목 번호 ↔ 목차 연동 ──────────────────────────────────────────────
   const optNumbering = document.getElementById('opt-numbering');
-  const optToc       = document.getElementById('opt-toc');
 
   function applyPreviewNumbering() {
     document.getElementById('preview-pane').classList.toggle('numbered', optNumbering.checked);
   }
 
-  optToc.addEventListener('change', () => {
-    if (optToc.checked) optNumbering.checked = true;   // 목차 ON → 번호 자동 ON
-    applyPreviewNumbering();
-  });
-  optNumbering.addEventListener('change', () => {
-    if (!optNumbering.checked) optToc.checked = false; // 번호 OFF → 목차 자동 OFF
-    applyPreviewNumbering();
-  });
+  optNumbering.addEventListener('change', applyPreviewNumbering);
 
   applyPreviewNumbering(); // 초기 상태 반영
 

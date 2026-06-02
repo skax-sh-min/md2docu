@@ -40,7 +40,7 @@ public class MarkdownService {
 
     public String toHtml(String markdown, boolean generateToc, boolean numberHeadings) {
         if (generateToc) {
-            markdown = insertCustomToc(markdown);
+            markdown = insertCustomToc(markdown, numberHeadings);
         } else if (numberHeadings) {
             markdown = insertHeadingNumbers(markdown);
         }
@@ -56,7 +56,7 @@ public class MarkdownService {
         return n * 2 >= texts.size();
     }
 
-    private String insertCustomToc(String markdown) {
+    private String insertCustomToc(String markdown, boolean numberHeadings) {
         String[] lines = markdown.split("\n", -1);
 
         // H1 위치와 H2+ 헤딩 수집 (펜스 코드 블록 내부 제외)
@@ -87,8 +87,8 @@ public class MarkdownService {
 
         if (levels.isEmpty()) return markdown;
 
-        // 헤딩이 이미 번호를 가지고 있으면 자동 번호 생략
-        boolean useNumbers = !hasExistingNumbering(texts);
+        // 사용자 옵션 + 기존 번호 감지로 최종 번호 사용 여부 결정
+        boolean useNumbers = numberHeadings && !hasExistingNumbering(texts);
 
         // 헤딩별 번호 계산: 1., 1.1., 1.1.1. ...
         int[] counters = new int[7]; // 인덱스 2~6 → H2~H6

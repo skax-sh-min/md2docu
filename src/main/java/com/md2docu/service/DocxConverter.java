@@ -209,7 +209,8 @@ public class DocxConverter {
             XWPFParagraph p = doc.createParagraph();
             p.setIndentationLeft(720);
 
-            CTShd shd = p.getCTP().getPPr().addNewShd();
+            CTPPr pPr = p.getCTP().getPPr() != null ? p.getCTP().getPPr() : p.getCTP().addNewPPr();
+            CTShd shd = pPr.addNewShd();
             shd.setFill("F5F5F5");
             shd.setVal(STShd.CLEAR);
 
@@ -253,7 +254,8 @@ public class DocxConverter {
         XWPFParagraph p = doc.createParagraph();
         p.setIndentationLeft(720);
 
-        CTBorder left = p.getCTP().getPPr().addNewPBdr().addNewLeft();
+        CTPPr pPr = p.getCTP().getPPr() != null ? p.getCTP().getPPr() : p.getCTP().addNewPPr();
+        CTBorder left = pPr.addNewPBdr().addNewLeft();
         left.setVal(STBorder.SINGLE);
         left.setSz(BigInteger.valueOf(16));
         left.setColor("CCCCCC");

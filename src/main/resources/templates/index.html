@@ -267,6 +267,7 @@ System.out.println("Hello, md2docu!");
       });
       const data = await res.json();
       document.getElementById('preview-pane').innerHTML = data.html;
+      applyPreviewNumbering();
     } catch (e) { /* 무시 */ }
   }
 

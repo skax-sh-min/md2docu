@@ -65,7 +65,7 @@ public class MarkdownService {
                 } else {
                     int level = atxLevel(line);
                     if (level == 1 && h1LineIdx < 0) h1LineIdx = i;
-                    else if (level >= 2) { levels.add(level); texts.add(line.substring(level).trim()); lineIndices.add(i); }
+                    else if (level >= 2) { levels.add(level); texts.add(atxText(line, level)); lineIndices.add(i); }
                 }
             } else if (isFenceClose(line, fenceChar, fenceLen)) {
                 inFence = false;
@@ -171,7 +171,7 @@ public class MarkdownService {
                     inFence = true; fenceChar = (char) fd[0]; fenceLen = fd[1];
                 } else {
                     int level = atxLevel(line);
-                    if (level >= 2) { levels.add(level); texts.add(line.substring(level).trim()); lineIndices.add(i); }
+                    if (level >= 2) { levels.add(level); texts.add(atxText(line, level)); lineIndices.add(i); }
                 }
             } else if (isFenceClose(line, fenceChar, fenceLen)) {
                 inFence = false;
@@ -248,10 +248,18 @@ public class MarkdownService {
     }
 
     private int atxLevel(String line) {
-        int n = 0;
-        while (n < line.length() && line.charAt(n) == '#') n++;
+        int start = 0;
+        while (start < 3 && start < line.length() && line.charAt(start) == ' ') start++;
+        int i = start, n = 0;
+        while (i < line.length() && line.charAt(i) == '#') { i++; n++; }
         if (n == 0 || n > 6) return 0;
-        return (n < line.length() && line.charAt(n) == ' ') ? n : 0;
+        return (i < line.length() && line.charAt(i) == ' ') ? n : 0;
+    }
+
+    private String atxText(String line, int level) {
+        int start = 0;
+        while (start < 3 && start < line.length() && line.charAt(start) == ' ') start++;
+        return line.substring(start + level).trim();
     }
 
     private String escapeHtml(String s) {

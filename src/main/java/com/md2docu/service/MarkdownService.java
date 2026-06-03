@@ -13,7 +13,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 @Service
 public class MarkdownService {
@@ -34,10 +33,6 @@ public class MarkdownService {
         this.renderer = HtmlRenderer.builder(options).build();
     }
 
-    // H2+ 헤딩이 이미 번호를 가지고 있는지 감지: "1)", "1.", "1.1", "(1)" 등
-    private static final Pattern EXISTING_NUMBER_PAT =
-        Pattern.compile("^(\\d+[.)]|\\d+\\.\\d+|\\(\\d+\\))");
-
     public String toHtml(String markdown, boolean generateToc, boolean numberHeadings) {
         if (generateToc) {
             markdown = insertCustomToc(markdown, numberHeadings);
@@ -46,14 +41,6 @@ public class MarkdownService {
         }
         Node document = parser.parse(markdown);
         return renderer.render(document);
-    }
-
-    private boolean hasExistingNumbering(List<String> texts) {
-        if (texts.isEmpty()) return false;
-        long n = texts.stream()
-            .filter(t -> EXISTING_NUMBER_PAT.matcher(t).find())
-            .count();
-        return n * 2 >= texts.size();
     }
 
     private String insertCustomToc(String markdown, boolean numberHeadings) {
@@ -87,8 +74,7 @@ public class MarkdownService {
 
         if (levels.isEmpty()) return markdown;
 
-        // 사용자 옵션 + 기존 번호 감지로 최종 번호 사용 여부 결정
-        boolean useNumbers = numberHeadings && !hasExistingNumbering(texts);
+        boolean useNumbers = numberHeadings;
 
         // 헤딩별 번호 계산: 1., 1.1., 1.1.1. ...
         int[] counters = new int[7]; // 인덱스 2~6 → H2~H6
@@ -192,7 +178,7 @@ public class MarkdownService {
             }
         }
 
-        if (levels.isEmpty() || hasExistingNumbering(texts)) return markdown;
+        if (levels.isEmpty()) return markdown;
 
         // 번호 계산
         int[] counters = new int[7];

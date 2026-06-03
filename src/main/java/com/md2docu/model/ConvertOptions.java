@@ -10,4 +10,5 @@ public class ConvertOptions {
     private String linkStrategy = "keep";
     private int remoteImageTimeout = 5000;
     private boolean generateToc = false;
+    private boolean numberHeadings = false;
 }

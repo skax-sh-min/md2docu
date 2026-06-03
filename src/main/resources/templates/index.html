@@ -29,14 +29,10 @@
       font-size: 14px;
       line-height: 1.6;
     }
-    #preview-pane { counter-reset: h2cnt h3cnt h4cnt; }
-    #preview-pane h1 { font-size: 1.6rem; margin: 20px 0 14px; counter-reset: h2cnt h3cnt h4cnt; }
-    #preview-pane h2 { font-size: 1.3rem; margin: 18px 0 10px; counter-increment: h2cnt; counter-reset: h3cnt h4cnt; }
-    #preview-pane h2::before { content: counter(h2cnt) ". "; }
-    #preview-pane h3 { font-size: 1.1rem; margin: 14px 0 8px; counter-increment: h3cnt; counter-reset: h4cnt; }
-    #preview-pane h3::before { content: counter(h2cnt) "." counter(h3cnt) " "; }
-    #preview-pane h4 { margin: 10px 0 6px; counter-increment: h4cnt; }
-    #preview-pane h4::before { content: counter(h2cnt) "." counter(h3cnt) "." counter(h4cnt) " "; }
+    #preview-pane h1 { font-size: 1.6rem; margin: 20px 0 14px; }
+    #preview-pane h2 { font-size: 1.3rem; margin: 18px 0 10px; }
+    #preview-pane h3 { font-size: 1.1rem; margin: 14px 0 8px; }
+    #preview-pane h4 { margin: 10px 0 6px; }
     #preview-pane h5, #preview-pane h6 { margin: 10px 0 6px; }
     #preview-pane p  { margin: 0 0 8px; }
     #preview-pane pre { background: #f5f5f5; padding: 10px; border-radius: 4px; overflow-x: auto; }
@@ -141,22 +137,22 @@ System.out.println("Hello, md2docu!");
       <div id="pdf-warning" class="alert alert-warning py-2 mb-3 d-none">
         ⚠️ PDF는 라이브러리 한계로 <strong>한글이 깨질 수 있습니다.</strong> 한글 문서는 DOCX를 권장합니다.
       </div>
-      <div class="row g-3">
-        <div class="col-sm-3">
+      <div class="row g-3 align-items-end">
+        <div class="col-sm-2">
           <label class="form-label small">출력 형식</label>
           <select class="form-select form-select-sm" id="opt-format">
             <option value="pdf">PDF</option>
             <option value="docx" selected>DOCX</option>
           </select>
         </div>
-        <div class="col-sm-3">
+        <div class="col-sm-2">
           <label class="form-label small">페이지 크기</label>
           <select class="form-select form-select-sm" id="opt-pagesize">
             <option value="A4">A4</option>
             <option value="LETTER">Letter</option>
           </select>
         </div>
-        <div class="col-sm-3">
+        <div class="col-sm-2">
           <label class="form-label small">링크 처리 방식</label>
           <select class="form-select form-select-sm" id="opt-link">
             <option value="keep">링크 유지</option>
@@ -164,13 +160,20 @@ System.out.println("Hello, md2docu!");
             <option value="ignore">링크 텍스트만</option>
           </select>
         </div>
-        <div class="col-sm-3">
-          <label class="form-label small d-block">&nbsp;</label>
-          <div class="form-check form-check-inline">
+        <div class="col-sm-2">
+          <div class="form-check">
             <input class="form-check-input" type="checkbox" id="opt-images" checked/>
             <label class="form-check-label small" for="opt-images">이미지 포함</label>
           </div>
-          <div class="form-check form-check-inline">
+        </div>
+        <div class="col-sm-2">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="opt-numbering" checked/>
+            <label class="form-check-label small" for="opt-numbering">소제목 번호 생성</label>
+          </div>
+        </div>
+        <div class="col-sm-2">
+          <div class="form-check">
             <input class="form-check-input" type="checkbox" id="opt-toc" checked/>
             <label class="form-check-label small" for="opt-toc">목차 생성</label>
           </div>
@@ -251,12 +254,13 @@ System.out.println("Hello, md2docu!");
   document.getElementById('editor').addEventListener('input', debounce(updatePreview, 600));
 
   async function updatePreview() {
-    const markdown = document.getElementById('editor').value;
+    const markdown    = document.getElementById('editor').value;
+    const numbering   = document.getElementById('opt-numbering').checked;
     try {
       const res = await fetch('/api/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ markdown })
+        body: JSON.stringify({ markdown, numberHeadings: numbering })
       });
       const data = await res.json();
       document.getElementById('preview-pane').innerHTML = data.html;
@@ -266,13 +270,17 @@ System.out.println("Hello, md2docu!");
   // 초기 미리보기
   updatePreview();
 
+  // 소제목 번호 체크 변경 시 미리보기 갱신
+  document.getElementById('opt-numbering').addEventListener('change', updatePreview);
+
   // ── 변환 ──────────────────────────────────────────────────────────────────
   document.getElementById('btn-convert').addEventListener('click', async () => {
-    const format   = document.getElementById('opt-format').value;
-    const pageSize = document.getElementById('opt-pagesize').value;
-    const link     = document.getElementById('opt-link').value;
-    const images   = document.getElementById('opt-images').checked;
-    const toc      = document.getElementById('opt-toc').checked;
+    const format    = document.getElementById('opt-format').value;
+    const pageSize  = document.getElementById('opt-pagesize').value;
+    const link      = document.getElementById('opt-link').value;
+    const images    = document.getElementById('opt-images').checked;
+    const numbering = document.getElementById('opt-numbering').checked;
+    const toc       = document.getElementById('opt-toc').checked;
 
     const activeTab = document.querySelector('[data-tab].active').dataset.tab;
     hideResults();
@@ -286,7 +294,7 @@ System.out.println("Hello, md2docu!");
         const res = await fetch(`/api/convert/${format}/text`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ markdown, pageSize, linkStrategy: link, includeImages: images, generateToc: toc })
+          body: JSON.stringify({ markdown, pageSize, linkStrategy: link, includeImages: images, numberHeadings: numbering, generateToc: toc })
         });
         data = await res.json();
         if (!res.ok) throw new Error(data.error || '변환 오류');
@@ -297,6 +305,7 @@ System.out.println("Hello, md2docu!");
         form.append('pageSize', pageSize);
         form.append('linkStrategy', link);
         form.append('includeImages', images);
+        form.append('numberHeadings', numbering);
         form.append('generateToc', toc);
         const res = await fetch(`/api/convert/${format}`, { method: 'POST', body: form });
         data = await res.json();

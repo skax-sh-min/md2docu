@@ -150,9 +150,10 @@ public class ConvertController {
      * POST /api/preview
      */
     @PostMapping("/preview")
-    public ResponseEntity<Map<String, String>> preview(@RequestBody Map<String, String> body) {
-        String markdown = body.getOrDefault("markdown", "");
-        String html = convertService.preview(markdown);
+    public ResponseEntity<Map<String, String>> preview(@RequestBody Map<String, Object> body) {
+        String markdown = (String) body.getOrDefault("markdown", "");
+        boolean numberHeadings = Boolean.TRUE.equals(body.get("numberHeadings"));
+        String html = convertService.preview(markdown, numberHeadings);
         return ResponseEntity.ok(Map.of("html", html));
     }
 

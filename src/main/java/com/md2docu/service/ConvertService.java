@@ -125,8 +125,8 @@ public class ConvertService {
 
     // ── 미리보기 ─────────────────────────────────────────────────────────────
 
-    public String preview(String markdown) {
-        String html = markdownService.toHtml(markdown, false, false);
+    public String preview(String markdown, boolean numberHeadings) {
+        String html = markdownService.toHtml(markdown, false, numberHeadings);
         return Jsoup.clean(html, Safelist.relaxed()
             .addTags("div", "span", "hr", "del")
             .addAttributes("div", "class")

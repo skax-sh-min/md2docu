@@ -125,7 +125,12 @@ public class MarkdownService {
                 }
 
                 int level = atxLevel(line);
-                if (level >= 1 && sb.length() > 0 && !sb.toString().endsWith("\n\n")) sb.append("\n");
+                if (level >= 1 && sb.length() > 0) {
+                    boolean endsWithDoubleNewline = sb.length() >= 2
+                        && sb.charAt(sb.length() - 1) == '\n'
+                        && sb.charAt(sb.length() - 2) == '\n';
+                    if (!endsWithDoubleNewline) sb.append("\n");
+                }
 
                 if (level == 1 && i == h1LineIdx) {
                     sb.append("\n\n").append(line).append("\n\n");

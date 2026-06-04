@@ -24,6 +24,9 @@ public class PdfConverter {
     private static final Pattern IMG_PATTERN =
         Pattern.compile("<img([^>]*?)\\ssrc=\"([^\"]+)\"([^>]*?)/?>");
 
+    private static final Pattern LOCAL_LINK_PATTERN =
+        Pattern.compile("<a\\s[^>]*?href=\"(?!https?://)(?!#)(.*?)\"[^>]*?>(.*?)</a>");
+
     private final ImageResolver imageResolver;
 
     public PdfConverter(ImageResolver imageResolver) {
@@ -108,8 +111,7 @@ public class PdfConverter {
         }
         if ("warn".equals(options.getLinkStrategy())) {
             // 로컬 파일 링크에 경고 표시 추가
-            Pattern localLink = Pattern.compile("<a\\s[^>]*?href=\"(?!https?://)(?!#)(.*?)\"[^>]*?>(.*?)</a>");
-            Matcher m = localLink.matcher(html);
+            Matcher m = LOCAL_LINK_PATTERN.matcher(html);
             StringBuilder sb = new StringBuilder();
             while (m.find()) {
                 String href = m.group(1);

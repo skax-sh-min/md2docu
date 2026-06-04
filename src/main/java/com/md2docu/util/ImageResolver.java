@@ -104,20 +104,25 @@ public class ImageResolver {
     }
 
     public String guessMimeType(String src) {
-        String lower = src.toLowerCase();
-        if (lower.contains(".png"))  return "image/png";
-        if (lower.contains(".jpg") || lower.contains(".jpeg")) return "image/jpeg";
-        if (lower.contains(".gif"))  return "image/gif";
-        if (lower.contains(".svg"))  return "image/svg+xml";
-        if (lower.contains(".webp")) return "image/webp";
+        String path = stripQuery(src.toLowerCase());
+        if (path.endsWith(".png"))                            return "image/png";
+        if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
+        if (path.endsWith(".gif"))                            return "image/gif";
+        if (path.endsWith(".svg"))                            return "image/svg+xml";
+        if (path.endsWith(".webp"))                           return "image/webp";
         return "image/png";
     }
 
     public int detectPictureType(String src) {
-        String lower = src.toLowerCase();
-        if (lower.contains(".png"))  return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_PNG;
-        if (lower.contains(".gif"))  return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_GIF;
-        if (lower.contains(".svg"))  return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_PNG; // SVG는 PNG로 폴백
+        String path = stripQuery(src.toLowerCase());
+        if (path.endsWith(".png"))  return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_PNG;
+        if (path.endsWith(".gif"))  return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_GIF;
+        if (path.endsWith(".svg"))  return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_PNG;
         return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_JPEG;
+    }
+
+    private static String stripQuery(String lower) {
+        int q = lower.indexOf('?');
+        return q > 0 ? lower.substring(0, q) : lower;
     }
 }

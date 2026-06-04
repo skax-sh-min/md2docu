@@ -8,7 +8,6 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.URI;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
@@ -69,15 +68,15 @@ public class ImageResolver {
     }
 
     private byte[] fetchRemote(String url, List<ConvertWarning> warnings, int timeout) {
+        HttpURLConnection conn = null;
         try {
             validateRemoteUrl(url);
-            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
             conn.setInstanceFollowRedirects(false);
             conn.setConnectTimeout(timeout);
             conn.setReadTimeout(timeout);
             conn.setRequestProperty("User-Agent", "md2docu/1.0");
-            int status = conn.getResponseCode();
-            if (status == 200) {
+            if (conn.getResponseCode() == 200) {
                 try (InputStream is = conn.getInputStream()) {
                     byte[] data = is.readNBytes((int) MAX_IMAGE_BYTES + 1);
                     if (data.length > MAX_IMAGE_BYTES) {
@@ -92,6 +91,8 @@ public class ImageResolver {
         } catch (Exception e) {
             warnings.add(ConvertWarning.imageFetchFailed(url));
             return null;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 

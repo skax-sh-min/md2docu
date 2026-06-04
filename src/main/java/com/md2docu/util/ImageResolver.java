@@ -17,6 +17,8 @@ import java.util.List;
 @Component
 public class ImageResolver {
 
+    private static final long MAX_IMAGE_BYTES = 50L * 1024 * 1024; // 50 MB
+
     public String resolveToBase64DataUri(String src, Path basePath, List<ConvertWarning> warnings, int timeout) {
         try {
             byte[] bytes = resolveToBytes(src, basePath, warnings, timeout);
@@ -51,6 +53,10 @@ public class ImageResolver {
             }
             if (Files.exists(imagePath)) {
                 try {
+                    if (Files.size(imagePath) > MAX_IMAGE_BYTES) {
+                        warnings.add(ConvertWarning.imageNotFound(src + " (파일이 너무 큼, 최대 50MB)"));
+                        return null;
+                    }
                     return Files.readAllBytes(imagePath);
                 } catch (Exception e) {
                     warnings.add(ConvertWarning.imageNotFound(src));
@@ -73,7 +79,12 @@ public class ImageResolver {
             int status = conn.getResponseCode();
             if (status == 200) {
                 try (InputStream is = conn.getInputStream()) {
-                    return is.readAllBytes();
+                    byte[] data = is.readNBytes((int) MAX_IMAGE_BYTES + 1);
+                    if (data.length > MAX_IMAGE_BYTES) {
+                        warnings.add(ConvertWarning.imageFetchFailed(url + " (응답이 너무 큼, 최대 50MB)"));
+                        return null;
+                    }
+                    return data;
                 }
             }
             warnings.add(ConvertWarning.imageFetchFailed(url));

@@ -24,6 +24,9 @@ public class PdfConverter {
     private static final Pattern IMG_PATTERN =
         Pattern.compile("<img([^>]*?)\\ssrc=\"([^\"]+)\"([^>]*?)/?>");
 
+    private static final Pattern IMG_REMOVE_PATTERN =
+        Pattern.compile("<img[^>]*?>");
+
     private static final Pattern LOCAL_LINK_PATTERN =
         Pattern.compile("<a\\s[^>]*?href=\"(?!https?://)(?!#)(.*?)\"[^>]*?>(.*?)</a>");
 
@@ -81,7 +84,7 @@ public class PdfConverter {
 
     private String processImages(String html, ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
         if (!options.isIncludeImages()) {
-            return html.replaceAll("<img[^>]*?>", "<span class=\"img-removed\">[이미지 제외됨]</span>");
+            return IMG_REMOVE_PATTERN.matcher(html).replaceAll("<span class=\"img-removed\">[이미지 제외됨]</span>");
         }
 
         Matcher m = IMG_PATTERN.matcher(html);

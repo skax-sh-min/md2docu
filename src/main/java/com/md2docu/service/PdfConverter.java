@@ -33,10 +33,13 @@ public class PdfConverter {
 
     private final ImageResolver imageResolver;
     private final UserSettingsService settingsService;
+    private final FontService fontService;
 
-    public PdfConverter(ImageResolver imageResolver, UserSettingsService settingsService) {
+    public PdfConverter(ImageResolver imageResolver, UserSettingsService settingsService,
+                        FontService fontService) {
         this.imageResolver = imageResolver;
         this.settingsService = settingsService;
+        this.fontService = fontService;
     }
 
     public byte[] convert(String html, ConvertOptions options, Path basePath, List<ConvertWarning> warnings) throws IOException {
@@ -52,11 +55,9 @@ public class PdfConverter {
         PdfRendererBuilder builder = new PdfRendererBuilder();
         builder.useFastMode();
 
-        // Windows: Malgun Gothic
-        tryAddFont(builder, "C:/Windows/Fonts/malgun.ttf", "Malgun Gothic");
-        tryAddFont(builder, "C:/Windows/Fonts/malgunbd.ttf", "Malgun Gothic");
-        // Linux: Noto Sans CJK
-        tryAddFont(builder, "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", "Noto Sans CJK");
+        for (FontService.FontEntry entry : fontService.getAvailableFonts()) {
+            tryAddFont(builder, entry.path(), entry.family());
+        }
 
         builder.useUriResolver((baseUri, uri) -> {
             if (uri == null) return null;

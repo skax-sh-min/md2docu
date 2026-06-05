@@ -222,8 +222,15 @@ System.out.println("Hello, md2docu!");
         <div class="row g-3">
           <div class="col-12">
             <label class="form-label fw-semibold">폰트 패밀리</label>
-            <input type="text" class="form-control form-control-sm" id="cfg-fontFamily"/>
-            <small class="text-muted">CSS font-family 형식. 예: <code>Malgun Gothic, Arial, sans-serif</code></small>
+            <input type="text" class="form-control form-control-sm" id="cfg-fontFamily" list="font-suggestions"/>
+            <datalist id="font-suggestions"></datalist>
+            <div class="mt-1">
+              <small class="text-muted">CSS font-family 형식. 예: <code>Malgun Gothic, Arial, sans-serif</code></small>
+            </div>
+            <div id="detected-fonts-wrap" class="mt-1 d-none">
+              <small class="text-muted">서버에서 감지된 폰트: </small>
+              <span id="detected-fonts-badges"></span>
+            </div>
           </div>
           <div class="col-sm-3">
             <label class="form-label">본문 크기 (pt)</label>
@@ -480,10 +487,37 @@ System.out.println("Hello, md2docu!");
   };
 
   document.getElementById('settingsModal').addEventListener('show.bs.modal', async () => {
-    try {
-      const res = await fetch('/api/settings');
-      if (res.ok) applySettingsToForm(await res.json());
-    } catch(e) { /* 실패 시 현재 폼 값 유지 */ }
+    const [settingsRes, fontsRes] = await Promise.allSettled([
+      fetch('/api/settings'),
+      fetch('/api/settings/fonts')
+    ]);
+
+    if (settingsRes.status === 'fulfilled' && settingsRes.value.ok) {
+      applySettingsToForm(await settingsRes.value.json());
+    }
+
+    if (fontsRes.status === 'fulfilled' && fontsRes.value.ok) {
+      const families = await fontsRes.value.json();
+      const datalist = document.getElementById('font-suggestions');
+      datalist.innerHTML = '';
+      families.forEach(f => {
+        const opt = document.createElement('option');
+        opt.value = f;
+        datalist.appendChild(opt);
+      });
+
+      const badgesEl = document.getElementById('detected-fonts-badges');
+      const wrapEl   = document.getElementById('detected-fonts-wrap');
+      if (families.length > 0) {
+        badgesEl.innerHTML = families.map(f =>
+          `<span class="badge text-bg-secondary me-1" style="cursor:pointer" onclick="document.getElementById('cfg-fontFamily').value='${f.replace(/'/g, "\\'")}'">` +
+          f + `</span>`
+        ).join('');
+        wrapEl.classList.remove('d-none');
+      } else {
+        wrapEl.classList.add('d-none');
+      }
+    }
   });
 
   function applySettingsToForm(s) {

@@ -23,11 +23,14 @@ import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import javax.imageio.ImageIO;
 
 @Service
 public class DocxConverter {
+
+    private static final Logger log = Logger.getLogger(DocxConverter.class.getName());
 
     private final ImageResolver imageResolver;
     private final UserSettingsService settingsService;
@@ -235,7 +238,9 @@ public class DocxConverter {
                 dst.toEndToken();
                 src.moveXml(dst);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.warning("WML 요소 삽입 실패: " + e.getMessage());
+        }
     }
 
     // ── 코드 블록 ─────────────────────────────────────────────────────────────

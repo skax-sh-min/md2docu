@@ -2,6 +2,7 @@ package com.md2docu.service;
 
 import com.md2docu.model.ConvertOptions;
 import com.md2docu.model.ConvertWarning;
+import com.md2docu.model.UserSettings;
 import com.md2docu.util.ImageResolver;
 import org.apache.poi.util.Units;
 import org.apache.poi.xwpf.usermodel.*;
@@ -22,16 +23,28 @@ import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import javax.imageio.ImageIO;
 
 @Service
 public class DocxConverter {
 
-    private final ImageResolver imageResolver;
+    private static final Logger log = Logger.getLogger(DocxConverter.class.getName());
 
-    public DocxConverter(ImageResolver imageResolver) {
+    private final ImageResolver imageResolver;
+    private final UserSettingsService settingsService;
+
+    private static final int    TOC_TITLE_FONT_SIZE = 12;
+    private static final double IMG_PX_TO_PT         = 0.75;
+    private static final double IMG_MAX_WIDTH_PT     = 400.0;
+    private static final double IMG_MAX_HEIGHT_PT    = 550.0;
+    private static final int    IMG_FALLBACK_W_PT    = 400;
+    private static final int    IMG_FALLBACK_H_PT    = 300;
+
+    public DocxConverter(ImageResolver imageResolver, UserSettingsService settingsService) {
         this.imageResolver = imageResolver;
+        this.settingsService = settingsService;
     }
 
     public byte[] convert(String html, ConvertOptions options, Path basePath, List<ConvertWarning> warnings) throws IOException {
@@ -79,7 +92,7 @@ public class DocxConverter {
             case "p"  -> {
                 XWPFParagraph p = doc.createParagraph();
                 p.setSpacingBetween(1.2);
-                p.setSpacingAfter(80);
+                p.setSpacingAfter(Twips.SPACE_PARA_AFTER);
                 processInlineNodes(doc, p, el.childNodes(), options, basePath, warnings, new RunState());
             }
             case "pre" -> addCodeBlock(doc, el);
@@ -93,11 +106,11 @@ public class DocxConverter {
                 if (!el.childNodes().isEmpty()) {
                     boolean isToc = el.hasClass("toc");
                     if (isToc) {
-                        addSpacerParagraph(doc, 200);
+                        addSpacerParagraph(doc, Twips.SPACE_TOC_BEFORE);
                         addTocTitle(doc);
                     }
                     processBlockNodes(doc, el.childNodes(), options, basePath, warnings, bkId);
-                    if (isToc) addSpacerParagraph(doc, 280);
+                    if (isToc) addSpacerParagraph(doc, Twips.SPACE_TOC_AFTER);
                 }
             }
         }
@@ -144,27 +157,52 @@ public class DocxConverter {
     }
 
     private void applyRun(XWPFParagraph para, String text, RunState state) {
+        UserSettings s = settingsService.get();
         XWPFRun run = para.createRun();
         run.setBold(state.bold);
         run.setItalic(state.italic);
         if (state.strike) run.setStrikeThrough(true);
         if (state.code) {
             run.setFontFamily("Courier New");
-            run.setFontSize(10);
+            run.setFontSize(s.getCodeFontSizePt());
+        } else {
+            run.setFontFamily(primaryFont(s.getBodyFontFamily()));
+            run.setFontSize(s.getBodyFontSizePt());
         }
+        if (state.color != null) run.setColor(state.color);
         run.setText(text);
+    }
+
+    private static String primaryFont(String fontFamily) {
+        return fontFamily.split(",")[0].trim().replace("'", "").replace("\"", "");
+    }
+
+    private static int headingSize(int level, UserSettings s) {
+        return switch (level) {
+            case 1 -> s.getH1FontSizePt();
+            case 2 -> s.getH2FontSizePt();
+            case 3 -> s.getH3FontSizePt();
+            case 4 -> s.getH4FontSizePt();
+            case 5 -> s.getH5FontSizePt();
+            default -> s.getH6FontSizePt();
+        };
+    }
+
+    private static int mmToTwips(int mm) {
+        return (int) Math.round(mm * 1440.0 / 25.4);
     }
 
     // ── 제목 ──────────────────────────────────────────────────────────────────
 
     private void addHeading(XWPFDocument doc, Element el, int level, int[] bkId) {
         XWPFParagraph p = doc.createParagraph();
-        p.setSpacingBefore(280);
-        p.setSpacingAfter(120);
+        p.setSpacingBefore(Twips.SPACE_H_BEFORE);
+        p.setSpacingAfter(Twips.SPACE_H_AFTER);
         p.setSpacingBetween(1.2);
 
-        int[] sizes = {28, 24, 20, 16, 14, 12};
-        int size = sizes[Math.min(level - 1, 5)];
+        UserSettings s = settingsService.get();
+        int size = headingSize(level, s);
+        String font = primaryFont(s.getBodyFontFamily());
         String text = el.text();
 
         String id = el.attr("id");
@@ -177,6 +215,7 @@ public class DocxConverter {
                 " w:id=\"%d\" w:name=\"%s\"/>", bid, safeId));
             XWPFRun run = p.createRun();
             run.setBold(true);
+            run.setFontFamily(font);
             run.setFontSize(size);
             run.setText(text);
             insertWmlElement(p, String.format(
@@ -185,6 +224,7 @@ public class DocxConverter {
         } else {
             XWPFRun run = p.createRun();
             run.setBold(true);
+            run.setFontFamily(font);
             run.setFontSize(size);
             run.setText(text);
         }
@@ -198,7 +238,9 @@ public class DocxConverter {
                 dst.toEndToken();
                 src.moveXml(dst);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.warning("WML 요소 삽입 실패: " + e.getMessage());
+        }
     }
 
     // ── 코드 블록 ─────────────────────────────────────────────────────────────
@@ -207,7 +249,7 @@ public class DocxConverter {
         String code = preEl.text();
         for (String line : code.split("\n", -1)) {
             XWPFParagraph p = doc.createParagraph();
-            p.setIndentationLeft(720);
+            p.setIndentationLeft(Twips.INDENT_BLOCK);
 
             CTPPr pPr = p.getCTP().getPPr() != null ? p.getCTP().getPPr() : p.getCTP().addNewPPr();
             CTShd shd = pPr.addNewShd();
@@ -216,7 +258,7 @@ public class DocxConverter {
 
             XWPFRun run = p.createRun();
             run.setFontFamily("Courier New");
-            run.setFontSize(10);
+            run.setFontSize(settingsService.get().getCodeFontSizePt());
             run.setText(line.isEmpty() ? " " : line);
         }
     }
@@ -228,9 +270,9 @@ public class DocxConverter {
         int index = 1;
         for (Element li : listEl.select("> li")) {
             XWPFParagraph p = doc.createParagraph();
-            p.setIndentationLeft(720 * depth);
+            p.setIndentationLeft(Twips.INDENT_BLOCK * depth);
             p.setSpacingBetween(1.2);
-            p.setSpacingAfter(40);
+            p.setSpacingAfter(Twips.SPACE_LIST_AFTER);
 
             String prefix = ordered ? (index++) + ". " : "• ";
             p.createRun().setText(prefix);
@@ -252,12 +294,12 @@ public class DocxConverter {
     private void addBlockquote(XWPFDocument doc, Element el,
                                ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
         XWPFParagraph p = doc.createParagraph();
-        p.setIndentationLeft(720);
+        p.setIndentationLeft(Twips.INDENT_BLOCK);
 
         CTPPr pPr = p.getCTP().getPPr() != null ? p.getCTP().getPPr() : p.getCTP().addNewPPr();
         CTBorder left = pPr.addNewPBdr().addNewLeft();
         left.setVal(STBorder.SINGLE);
-        left.setSz(BigInteger.valueOf(16));
+        left.setSz(BigInteger.valueOf(Twips.BORDER_QUOTE_SZ));
         left.setColor("CCCCCC");
 
         RunState state = new RunState();
@@ -302,10 +344,10 @@ public class DocxConverter {
 
     private void addTocTitle(XWPFDocument doc) {
         XWPFParagraph p = doc.createParagraph();
-        p.setSpacingAfter(100);
+        p.setSpacingAfter(Twips.SPACE_TOC_TITLE);
         XWPFRun run = p.createRun();
         run.setBold(true);
-        run.setFontSize(12);
+        run.setFontSize(TOC_TITLE_FONT_SIZE);
         run.setText("목차 (Contents)");
     }
 
@@ -320,7 +362,7 @@ public class DocxConverter {
         XWPFParagraph p = doc.createParagraph();
         CTBorder bottom = p.getCTP().addNewPPr().addNewPBdr().addNewBottom();
         bottom.setVal(STBorder.SINGLE);
-        bottom.setSz(BigInteger.valueOf(6));
+        bottom.setSz(BigInteger.valueOf(Twips.BORDER_HR_SZ));
         bottom.setColor("CCCCCC");
     }
 
@@ -364,13 +406,13 @@ public class DocxConverter {
         try {
             BufferedImage img = ImageIO.read(new ByteArrayInputStream(bytes));
             if (img != null && img.getWidth() > 0 && img.getHeight() > 0) {
-                double wPt = img.getWidth() * 0.75;   // 96dpi → pt (×72/96)
-                double hPt = img.getHeight() * 0.75;
-                double scale = Math.min(1.0, Math.min(400.0 / wPt, 550.0 / hPt));
+                double wPt = img.getWidth() * IMG_PX_TO_PT;
+                double hPt = img.getHeight() * IMG_PX_TO_PT;
+                double scale = Math.min(1.0, Math.min(IMG_MAX_WIDTH_PT / wPt, IMG_MAX_HEIGHT_PT / hPt));
                 return new int[]{Units.toEMU((int)(wPt * scale)), Units.toEMU((int)(hPt * scale))};
             }
         } catch (Exception ignored) {}
-        return new int[]{Units.toEMU(400), Units.toEMU(300)};
+        return new int[]{Units.toEMU(IMG_FALLBACK_W_PT), Units.toEMU(IMG_FALLBACK_H_PT)};
     }
 
     // ── 하이퍼링크 ────────────────────────────────────────────────────────────
@@ -444,20 +486,39 @@ public class DocxConverter {
         CTSectPr sectPr = body.addNewSectPr();
         CTPageSz pgSz = sectPr.addNewPgSz();
         if ("LETTER".equalsIgnoreCase(options.getPageSize())) {
-            // Letter: 12240 x 15840 twips (8.5 x 11 in)
-            pgSz.setW(BigInteger.valueOf(12240));
-            pgSz.setH(BigInteger.valueOf(15840));
+            pgSz.setW(BigInteger.valueOf(Twips.LETTER_WIDTH));
+            pgSz.setH(BigInteger.valueOf(Twips.LETTER_HEIGHT));
         } else {
-            // A4: 11906 x 16838 twips
-            pgSz.setW(BigInteger.valueOf(11906));
-            pgSz.setH(BigInteger.valueOf(16838));
+            pgSz.setW(BigInteger.valueOf(Twips.A4_WIDTH));
+            pgSz.setH(BigInteger.valueOf(Twips.A4_HEIGHT));
         }
 
+        UserSettings s = settingsService.get();
         CTPageMar pgMar = sectPr.addNewPgMar();
-        pgMar.setTop(BigInteger.valueOf(1134));
-        pgMar.setBottom(BigInteger.valueOf(1134));
-        pgMar.setLeft(BigInteger.valueOf(1417));
-        pgMar.setRight(BigInteger.valueOf(1417));
+        pgMar.setTop(BigInteger.valueOf(mmToTwips(s.getMarginTopMm())));
+        pgMar.setBottom(BigInteger.valueOf(mmToTwips(s.getMarginBottomMm())));
+        pgMar.setLeft(BigInteger.valueOf(mmToTwips(s.getMarginLeftMm())));
+        pgMar.setRight(BigInteger.valueOf(mmToTwips(s.getMarginRightMm())));
+    }
+
+    // ── 레이아웃 상수 ─────────────────────────────────────────────────────────
+
+    private static final class Twips {
+        // 1인치 = 1440 twips
+        static final int INDENT_BLOCK    = 720;   // 0.5 in — 코드 블록·인용문·목록 기준 들여쓰기
+        static final int SPACE_H_BEFORE  = 280;   // 제목 앞 간격
+        static final int SPACE_H_AFTER   = 120;   // 제목 뒤 간격
+        static final int SPACE_PARA_AFTER  = 80;  // 단락 뒤 간격
+        static final int SPACE_LIST_AFTER  = 40;  // 목록 항목 뒤 간격
+        static final int SPACE_TOC_BEFORE  = 200; // 목차 블록 앞 여백
+        static final int SPACE_TOC_AFTER   = 280; // 목차 블록 뒤 여백
+        static final int SPACE_TOC_TITLE   = 100; // 목차 제목 뒤 간격
+        static final int A4_WIDTH          = 11906; // 210mm
+        static final int A4_HEIGHT         = 16838; // 297mm
+        static final int LETTER_WIDTH      = 12240; // 8.5 in
+        static final int LETTER_HEIGHT     = 15840; // 11 in
+        static final int BORDER_QUOTE_SZ   = 16;    // 인용문 왼쪽 선 굵기 (1/8pt)
+        static final int BORDER_HR_SZ      = 6;     // 수평선 굵기 (1/8pt)
     }
 
     // ── RunState (불변 포맷 상태) ─────────────────────────────────────────────

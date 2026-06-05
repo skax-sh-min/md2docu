@@ -8,7 +8,6 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.URI;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
@@ -69,15 +68,15 @@ public class ImageResolver {
     }
 
     private byte[] fetchRemote(String url, List<ConvertWarning> warnings, int timeout) {
+        HttpURLConnection conn = null;
         try {
             validateRemoteUrl(url);
-            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
             conn.setInstanceFollowRedirects(false);
             conn.setConnectTimeout(timeout);
             conn.setReadTimeout(timeout);
             conn.setRequestProperty("User-Agent", "md2docu/1.0");
-            int status = conn.getResponseCode();
-            if (status == 200) {
+            if (conn.getResponseCode() == 200) {
                 try (InputStream is = conn.getInputStream()) {
                     byte[] data = is.readNBytes((int) MAX_IMAGE_BYTES + 1);
                     if (data.length > MAX_IMAGE_BYTES) {
@@ -92,6 +91,8 @@ public class ImageResolver {
         } catch (Exception e) {
             warnings.add(ConvertWarning.imageFetchFailed(url));
             return null;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 
@@ -104,20 +105,25 @@ public class ImageResolver {
     }
 
     public String guessMimeType(String src) {
-        String lower = src.toLowerCase();
-        if (lower.contains(".png"))  return "image/png";
-        if (lower.contains(".jpg") || lower.contains(".jpeg")) return "image/jpeg";
-        if (lower.contains(".gif"))  return "image/gif";
-        if (lower.contains(".svg"))  return "image/svg+xml";
-        if (lower.contains(".webp")) return "image/webp";
+        String path = stripQuery(src.toLowerCase());
+        if (path.endsWith(".png"))                            return "image/png";
+        if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
+        if (path.endsWith(".gif"))                            return "image/gif";
+        if (path.endsWith(".svg"))                            return "image/svg+xml";
+        if (path.endsWith(".webp"))                           return "image/webp";
         return "image/png";
     }
 
     public int detectPictureType(String src) {
-        String lower = src.toLowerCase();
-        if (lower.contains(".png"))  return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_PNG;
-        if (lower.contains(".gif"))  return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_GIF;
-        if (lower.contains(".svg"))  return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_PNG; // SVG는 PNG로 폴백
+        String path = stripQuery(src.toLowerCase());
+        if (path.endsWith(".png"))  return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_PNG;
+        if (path.endsWith(".gif"))  return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_GIF;
+        if (path.endsWith(".svg"))  return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_PNG;
         return org.apache.poi.xwpf.usermodel.Document.PICTURE_TYPE_JPEG;
+    }
+
+    private static String stripQuery(String lower) {
+        int q = lower.indexOf('?');
+        return q > 0 ? lower.substring(0, q) : lower;
     }
 }

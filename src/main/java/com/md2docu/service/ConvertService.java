@@ -31,6 +31,8 @@ public class ConvertService {
     @Value("${app.convert.temp-expiry-seconds:3600}")
     private long tempExpirySeconds;
 
+    private static final int MAX_STORE_SIZE = 500;
+
     // jobId → (result, createdAt)
     private final Map<String, StoredResult> store = new ConcurrentHashMap<>();
 
@@ -107,6 +109,12 @@ public class ConvertService {
         result.setContentType(contentType);
         result.setWarnings(warnings);
 
+        if (store.size() >= MAX_STORE_SIZE) {
+            store.entrySet().stream()
+                .min(Comparator.comparing(e -> e.getValue().createdAt()))
+                .map(Map.Entry::getKey)
+                .ifPresent(store::remove);
+        }
         store.put(jobId, new StoredResult(result, Instant.now()));
         return result;
     }

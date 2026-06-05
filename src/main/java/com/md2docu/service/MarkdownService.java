@@ -43,10 +43,23 @@ public class MarkdownService {
         return renderer.render(document);
     }
 
+    private record TocData(
+        int h1LineIdx,
+        List<Integer> levels,
+        List<String> texts,
+        List<Integer> lineIndices,
+        List<String> numbers) {}
+
     private String insertCustomToc(String markdown, boolean numberHeadings) {
         String[] lines = markdown.split("\n", -1);
+        TocData toc = collectHeadings(lines, numberHeadings);
+        if (toc.levels().isEmpty()) return markdown;
+        String tocHtml = buildTocHtml(toc);
+        return assembleTocMarkdown(lines, toc, tocHtml);
+    }
 
-        // H1 위치와 H2+ 헤딩 수집 (펜스 코드 블록 내부 제외)
+    // 1st pass: 헤딩 수집 + 번호 계산 (펜스 코드 블록 내부 제외)
+    private TocData collectHeadings(String[] lines, boolean numberHeadings) {
         int h1LineIdx = -1;
         List<Integer> levels = new ArrayList<>();
         List<String> texts = new ArrayList<>();
@@ -72,15 +85,10 @@ public class MarkdownService {
             }
         }
 
-        if (levels.isEmpty()) return markdown;
-
-        boolean useNumbers = numberHeadings;
-
-        // 헤딩별 번호 계산: 1., 1.1., 1.1.1. ...
-        int[] counters = new int[7]; // 인덱스 2~6 → H2~H6
+        int[] counters = new int[7];
         List<String> numbers = new ArrayList<>();
         for (int lv : levels) {
-            if (useNumbers) {
+            if (numberHeadings) {
                 counters[lv]++;
                 for (int j = lv + 1; j <= 6; j++) counters[j] = 0;
                 StringBuilder num = new StringBuilder();
@@ -91,27 +99,36 @@ public class MarkdownService {
             }
         }
 
-        // 목차 HTML 블록 생성 (링크 포함)
-        StringBuilder tocHtml = new StringBuilder("<div class=\"toc\">\n");
-        for (int i = 0; i < levels.size(); i++) {
-            int lv = levels.get(i);
+        return new TocData(h1LineIdx, levels, texts, lineIndices, numbers);
+    }
+
+    // 목차 HTML 블록 생성
+    private String buildTocHtml(TocData toc) {
+        StringBuilder sb = new StringBuilder("<div class=\"toc\">\n");
+        for (int i = 0; i < toc.levels().size(); i++) {
+            int lv = toc.levels().get(i);
             String indent = "&nbsp;&nbsp;".repeat((lv - 2) * 2);
             String anchorId = "toc-" + (i + 1);
-            String numPrefix = useNumbers ? numbers.get(i) + " " : "";
-            tocHtml.append(String.format(
+            String num = toc.numbers().get(i);
+            String numPrefix = num.isEmpty() ? "" : num + " ";
+            sb.append(String.format(
                 "<p class=\"toc-item toc-l%d\">%s<a href=\"#%s\">%s%s</a></p>\n",
-                lv, indent, anchorId, numPrefix, escapeHtml(texts.get(i))));
+                lv, indent, anchorId, numPrefix, escapeHtml(toc.texts().get(i))));
         }
-        tocHtml.append("</div>");
+        sb.append("</div>");
+        return sb.toString();
+    }
 
-        // 줄 번호 → 헤딩 인덱스 맵
+    // 2nd pass: 마크다운 재조립 + 번호 붙인 헤딩 교체
+    private String assembleTocMarkdown(String[] lines, TocData toc, String tocHtml) {
         Map<Integer, Integer> lineToIdx = new HashMap<>();
-        for (int i = 0; i < lineIndices.size(); i++) lineToIdx.put(lineIndices.get(i), i);
+        for (int i = 0; i < toc.lineIndices().size(); i++) lineToIdx.put(toc.lineIndices().get(i), i);
 
-        // 마크다운 재조립 (펜스 코드 블록 내부는 그대로 유지)
         StringBuilder sb = new StringBuilder();
         boolean tocInserted = false;
-        inFence = false; fenceChar = 0; fenceLen = 0;
+        boolean inFence = false;
+        char fenceChar = 0;
+        int fenceLen = 0;
 
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
@@ -125,18 +142,23 @@ public class MarkdownService {
                 }
 
                 int level = atxLevel(line);
-                if (level >= 1 && sb.length() > 0 && !sb.toString().endsWith("\n\n")) sb.append("\n");
+                if (level >= 1 && sb.length() > 0) {
+                    boolean endsWithDoubleNewline = sb.length() >= 2
+                        && sb.charAt(sb.length() - 1) == '\n'
+                        && sb.charAt(sb.length() - 2) == '\n';
+                    if (!endsWithDoubleNewline) sb.append("\n");
+                }
 
-                if (level == 1 && i == h1LineIdx) {
+                if (level == 1 && i == toc.h1LineIdx()) {
                     sb.append("\n\n").append(line).append("\n\n");
                     sb.append(tocHtml).append("\n\n");
                     tocInserted = true;
                 } else if (lineToIdx.containsKey(i)) {
                     int idx = lineToIdx.get(i);
-                    int lv = levels.get(idx);
+                    int lv = toc.levels().get(idx);
                     String anchorId = "toc-" + (idx + 1);
-                    String numPrefix = useNumbers ? numbers.get(idx) + " " : "";
-                    String headingText = numPrefix + escapeHtml(texts.get(idx));
+                    String num = toc.numbers().get(idx);
+                    String headingText = (num.isEmpty() ? "" : num + " ") + escapeHtml(toc.texts().get(idx));
                     sb.append(String.format("<h%d id=\"%s\">%s</h%d>\n", lv, anchorId, headingText, lv));
                 } else {
                     sb.append(line).append("\n");
@@ -147,7 +169,7 @@ public class MarkdownService {
             }
         }
 
-        if (!tocInserted) return tocHtml + "\n\n" + markdown;
+        if (!tocInserted) return tocHtml + "\n\n" + String.join("\n", lines);
         return sb.toString();
     }
 

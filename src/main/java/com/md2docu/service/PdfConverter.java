@@ -2,6 +2,7 @@ package com.md2docu.service;
 
 import com.md2docu.model.ConvertOptions;
 import com.md2docu.model.ConvertWarning;
+import com.md2docu.model.UserSettings;
 import com.md2docu.util.ImageResolver;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import org.jsoup.Jsoup;
@@ -24,10 +25,21 @@ public class PdfConverter {
     private static final Pattern IMG_PATTERN =
         Pattern.compile("<img([^>]*?)\\ssrc=\"([^\"]+)\"([^>]*?)/?>");
 
-    private final ImageResolver imageResolver;
+    private static final Pattern IMG_REMOVE_PATTERN =
+        Pattern.compile("<img[^>]*?>");
 
-    public PdfConverter(ImageResolver imageResolver) {
+    private static final Pattern LOCAL_LINK_PATTERN =
+        Pattern.compile("<a\\s[^>]*?href=\"(?!https?://)(?!#)(.*?)\"[^>]*?>(.*?)</a>");
+
+    private final ImageResolver imageResolver;
+    private final UserSettingsService settingsService;
+    private final FontService fontService;
+
+    public PdfConverter(ImageResolver imageResolver, UserSettingsService settingsService,
+                        FontService fontService) {
         this.imageResolver = imageResolver;
+        this.settingsService = settingsService;
+        this.fontService = fontService;
     }
 
     public byte[] convert(String html, ConvertOptions options, Path basePath, List<ConvertWarning> warnings) throws IOException {
@@ -43,11 +55,9 @@ public class PdfConverter {
         PdfRendererBuilder builder = new PdfRendererBuilder();
         builder.useFastMode();
 
-        // Windows: Malgun Gothic
-        tryAddFont(builder, "C:/Windows/Fonts/malgun.ttf", "Malgun Gothic");
-        tryAddFont(builder, "C:/Windows/Fonts/malgunbd.ttf", "Malgun Gothic");
-        // Linux: Noto Sans CJK
-        tryAddFont(builder, "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", "Noto Sans CJK");
+        for (FontService.FontEntry entry : fontService.getAvailableFonts()) {
+            tryAddFont(builder, entry.path(), entry.family());
+        }
 
         builder.useUriResolver((baseUri, uri) -> {
             if (uri == null) return null;
@@ -78,7 +88,7 @@ public class PdfConverter {
 
     private String processImages(String html, ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
         if (!options.isIncludeImages()) {
-            return html.replaceAll("<img[^>]*?>", "<span class=\"img-removed\">[이미지 제외됨]</span>");
+            return IMG_REMOVE_PATTERN.matcher(html).replaceAll("<span class=\"img-removed\">[이미지 제외됨]</span>");
         }
 
         Matcher m = IMG_PATTERN.matcher(html);
@@ -103,13 +113,10 @@ public class PdfConverter {
 
     private String processLinks(String html, ConvertOptions options, List<ConvertWarning> warnings) {
         if ("ignore".equals(options.getLinkStrategy())) {
-            // <a href="...">text</a> → text
             return html.replaceAll("<a\\s[^>]*?>", "").replaceAll("</a>", "");
         }
         if ("warn".equals(options.getLinkStrategy())) {
-            // 로컬 파일 링크에 경고 표시 추가
-            Pattern localLink = Pattern.compile("<a\\s[^>]*?href=\"(?!https?://)(?!#)(.*?)\"[^>]*?>(.*?)</a>");
-            Matcher m = localLink.matcher(html);
+            Matcher m = LOCAL_LINK_PATTERN.matcher(html);
             StringBuilder sb = new StringBuilder();
             while (m.find()) {
                 String href = m.group(1);
@@ -122,74 +129,42 @@ public class PdfConverter {
             m.appendTail(sb);
             return sb.toString();
         }
-        return html; // keep
+        return html;
     }
 
     private String wrapHtml(String body, ConvertOptions options) {
-        return """
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <meta charset="UTF-8"/>
-              <style>
-                @page {
-                  size: %s;
-                  margin: 20mm 25mm;
-                }
-                body {
-                  font-family: 'Malgun Gothic', 'Noto Sans CJK', Arial, sans-serif;
-                  font-size: 11pt;
-                  line-height: 1.6;
-                  color: #333;
-                }
-                p { margin: 0 0 8pt 0; }
-                h1 { font-size: 22pt; border-bottom: 2px solid #333; padding-bottom: 4px; margin: 28pt 0 20pt 0; }
-                h2 { font-size: 18pt; border-bottom: 1px solid #ccc; padding-bottom: 2px; margin: 24pt 0 12pt 0; }
-                h3 { font-size: 14pt; margin: 20pt 0 10pt 0; }
-                h4, h5, h6 { font-size: 12pt; margin: 16pt 0 8pt 0; }
-                .toc { margin: 20pt 0 28pt 0; padding: 12pt 16pt; border: 1px solid #ddd; background: #f9f9f9; }
-                .toc-item { margin: 3pt 0; line-height: 1.6; }
-                pre {
-                  background: #f5f5f5;
-                  border: 1px solid #ddd;
-                  border-radius: 4px;
-                  padding: 10px 14px;
-                  font-family: 'Courier New', monospace;
-                  font-size: 9pt;
-                  white-space: pre-wrap;
-                  word-break: break-all;
-                }
-                code {
-                  font-family: 'Courier New', monospace;
-                  font-size: 9pt;
-                  background: #f0f0f0;
-                  padding: 1px 4px;
-                  border-radius: 2px;
-                }
-                pre code { background: none; padding: 0; }
-                table { border-collapse: collapse; width: 100%%; margin: 12px 0; }
-                th, td { border: 1px solid #ccc; padding: 6px 10px; }
-                th { background: #f0f0f0; font-weight: bold; }
-                blockquote {
-                  border-left: 4px solid #ccc;
-                  margin: 8px 0;
-                  padding: 4px 14px;
-                  color: #666;
-                  background: #fafafa;
-                }
-                img { max-width: 100%%; height: auto; }
-                a { color: #0066cc; }
-                hr { border: none; border-top: 1px solid #ccc; margin: 16px 0; }
-                .img-error { color: #c00; font-style: italic; font-size: 9pt; }
-                .img-removed { color: #999; font-style: italic; font-size: 9pt; }
-                .attach-warn { color: #c60; font-size: 9pt; }
-              </style>
-            </head>
-            <body>
-            %s
-            </body>
-            </html>
-            """.formatted(options.getPageSize().toUpperCase(), body);
+        UserSettings s = settingsService.get();
+        String css = buildCss(options, s);
+        return "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\"/>\n"
+            + "<style>\n" + css + "</style>\n"
+            + "</head>\n<body>\n" + body + "\n</body>\n</html>";
+    }
+
+    private String buildCss(ConvertOptions options, UserSettings s) {
+        String margin = s.getMarginTopMm() + "mm " + s.getMarginRightMm() + "mm "
+                      + s.getMarginBottomMm() + "mm " + s.getMarginLeftMm() + "mm";
+        return "@page { size: " + options.getPageSize().toUpperCase() + "; margin: " + margin + "; }\n"
+            + "body { font-family: " + s.getBodyFontFamily() + "; font-size: " + s.getBodyFontSizePt() + "pt; line-height: " + s.getLineHeight() + "; color: #333; }\n"
+            + "p { margin: 0 0 8pt 0; }\n"
+            + "h1 { font-size: " + s.getH1FontSizePt() + "pt; border-bottom: 2px solid #333; padding-bottom: 4px; margin: 28pt 0 20pt 0; }\n"
+            + "h2 { font-size: " + s.getH2FontSizePt() + "pt; border-bottom: 1px solid #ccc; padding-bottom: 2px; margin: 24pt 0 12pt 0; }\n"
+            + "h3 { font-size: " + s.getH3FontSizePt() + "pt; margin: 20pt 0 10pt 0; }\n"
+            + "h4, h5, h6 { font-size: " + s.getH4FontSizePt() + "pt; margin: 16pt 0 8pt 0; }\n"
+            + ".toc { margin: 20pt 0 28pt 0; padding: 12pt 16pt; border: 1px solid #ddd; background: #f9f9f9; }\n"
+            + ".toc-item { margin: 3pt 0; line-height: 1.6; }\n"
+            + "pre { background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; padding: 10px 14px; font-family: 'Courier New', monospace; font-size: " + s.getCodeFontSizePt() + "pt; white-space: pre-wrap; word-break: break-all; }\n"
+            + "code { font-family: 'Courier New', monospace; font-size: " + s.getCodeFontSizePt() + "pt; background: #f0f0f0; padding: 1px 4px; border-radius: 2px; }\n"
+            + "pre code { background: none; padding: 0; }\n"
+            + "table { border-collapse: collapse; width: 100%; margin: 12px 0; }\n"
+            + "th, td { border: 1px solid #ccc; padding: 6px 10px; }\n"
+            + "th { background: #f0f0f0; font-weight: bold; }\n"
+            + "blockquote { border-left: 4px solid #ccc; margin: 8px 0; padding: 4px 14px; color: #666; background: #fafafa; }\n"
+            + "img { max-width: 100%; height: auto; }\n"
+            + "a { color: #0066cc; }\n"
+            + "hr { border: none; border-top: 1px solid #ccc; margin: 16px 0; }\n"
+            + ".img-error { color: #c00; font-style: italic; font-size: 9pt; }\n"
+            + ".img-removed { color: #999; font-style: italic; font-size: 9pt; }\n"
+            + ".attach-warn { color: #c60; font-size: 9pt; }\n";
     }
 
     private String escapeHtml(String s) {

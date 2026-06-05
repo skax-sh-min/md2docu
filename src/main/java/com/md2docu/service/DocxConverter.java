@@ -2,6 +2,7 @@ package com.md2docu.service;
 
 import com.md2docu.model.ConvertOptions;
 import com.md2docu.model.ConvertWarning;
+import com.md2docu.model.UserSettings;
 import com.md2docu.util.ImageResolver;
 import org.apache.poi.util.Units;
 import org.apache.poi.xwpf.usermodel.*;
@@ -29,18 +30,18 @@ import javax.imageio.ImageIO;
 public class DocxConverter {
 
     private final ImageResolver imageResolver;
+    private final UserSettingsService settingsService;
 
-    private static final int    CODE_FONT_SIZE      = 10;
     private static final int    TOC_TITLE_FONT_SIZE = 12;
-    private static final int[]  HEADING_SIZES        = {28, 24, 20, 16, 14, 12};
     private static final double IMG_PX_TO_PT         = 0.75;
     private static final double IMG_MAX_WIDTH_PT     = 400.0;
     private static final double IMG_MAX_HEIGHT_PT    = 550.0;
     private static final int    IMG_FALLBACK_W_PT    = 400;
     private static final int    IMG_FALLBACK_H_PT    = 300;
 
-    public DocxConverter(ImageResolver imageResolver) {
+    public DocxConverter(ImageResolver imageResolver, UserSettingsService settingsService) {
         this.imageResolver = imageResolver;
+        this.settingsService = settingsService;
     }
 
     public byte[] convert(String html, ConvertOptions options, Path basePath, List<ConvertWarning> warnings) throws IOException {
@@ -153,15 +154,39 @@ public class DocxConverter {
     }
 
     private void applyRun(XWPFParagraph para, String text, RunState state) {
+        UserSettings s = settingsService.get();
         XWPFRun run = para.createRun();
         run.setBold(state.bold);
         run.setItalic(state.italic);
         if (state.strike) run.setStrikeThrough(true);
         if (state.code) {
             run.setFontFamily("Courier New");
-            run.setFontSize(CODE_FONT_SIZE);
+            run.setFontSize(s.getCodeFontSizePt());
+        } else {
+            run.setFontFamily(primaryFont(s.getBodyFontFamily()));
+            run.setFontSize(s.getBodyFontSizePt());
         }
+        if (state.color != null) run.setColor(state.color);
         run.setText(text);
+    }
+
+    private static String primaryFont(String fontFamily) {
+        return fontFamily.split(",")[0].trim().replace("'", "").replace("\"", "");
+    }
+
+    private static int headingSize(int level, UserSettings s) {
+        return switch (level) {
+            case 1 -> s.getH1FontSizePt();
+            case 2 -> s.getH2FontSizePt();
+            case 3 -> s.getH3FontSizePt();
+            case 4 -> s.getH4FontSizePt();
+            case 5 -> s.getH5FontSizePt();
+            default -> s.getH6FontSizePt();
+        };
+    }
+
+    private static int mmToTwips(int mm) {
+        return (int) Math.round(mm * 1440.0 / 25.4);
     }
 
     // ── 제목 ──────────────────────────────────────────────────────────────────
@@ -172,7 +197,9 @@ public class DocxConverter {
         p.setSpacingAfter(Twips.SPACE_H_AFTER);
         p.setSpacingBetween(1.2);
 
-        int size = HEADING_SIZES[Math.min(level - 1, 5)];
+        UserSettings s = settingsService.get();
+        int size = headingSize(level, s);
+        String font = primaryFont(s.getBodyFontFamily());
         String text = el.text();
 
         String id = el.attr("id");
@@ -185,6 +212,7 @@ public class DocxConverter {
                 " w:id=\"%d\" w:name=\"%s\"/>", bid, safeId));
             XWPFRun run = p.createRun();
             run.setBold(true);
+            run.setFontFamily(font);
             run.setFontSize(size);
             run.setText(text);
             insertWmlElement(p, String.format(
@@ -193,6 +221,7 @@ public class DocxConverter {
         } else {
             XWPFRun run = p.createRun();
             run.setBold(true);
+            run.setFontFamily(font);
             run.setFontSize(size);
             run.setText(text);
         }
@@ -224,7 +253,7 @@ public class DocxConverter {
 
             XWPFRun run = p.createRun();
             run.setFontFamily("Courier New");
-            run.setFontSize(CODE_FONT_SIZE);
+            run.setFontSize(settingsService.get().getCodeFontSizePt());
             run.setText(line.isEmpty() ? " " : line);
         }
     }
@@ -459,11 +488,12 @@ public class DocxConverter {
             pgSz.setH(BigInteger.valueOf(Twips.A4_HEIGHT));
         }
 
+        UserSettings s = settingsService.get();
         CTPageMar pgMar = sectPr.addNewPgMar();
-        pgMar.setTop(BigInteger.valueOf(Twips.MARGIN_VER));
-        pgMar.setBottom(BigInteger.valueOf(Twips.MARGIN_VER));
-        pgMar.setLeft(BigInteger.valueOf(Twips.MARGIN_HOR));
-        pgMar.setRight(BigInteger.valueOf(Twips.MARGIN_HOR));
+        pgMar.setTop(BigInteger.valueOf(mmToTwips(s.getMarginTopMm())));
+        pgMar.setBottom(BigInteger.valueOf(mmToTwips(s.getMarginBottomMm())));
+        pgMar.setLeft(BigInteger.valueOf(mmToTwips(s.getMarginLeftMm())));
+        pgMar.setRight(BigInteger.valueOf(mmToTwips(s.getMarginRightMm())));
     }
 
     // ── 레이아웃 상수 ─────────────────────────────────────────────────────────
@@ -482,8 +512,6 @@ public class DocxConverter {
         static final int A4_HEIGHT         = 16838; // 297mm
         static final int LETTER_WIDTH      = 12240; // 8.5 in
         static final int LETTER_HEIGHT     = 15840; // 11 in
-        static final int MARGIN_VER        = 1134;  // 상하 여백 20mm
-        static final int MARGIN_HOR        = 1417;  // 좌우 여백 25mm
         static final int BORDER_QUOTE_SZ   = 16;    // 인용문 왼쪽 선 굵기 (1/8pt)
         static final int BORDER_HR_SZ      = 6;     // 수평선 굵기 (1/8pt)
     }

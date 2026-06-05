@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>md2docu — Markdown 변환기</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <style>
     body { background: #f8f9fa; }
     .editor-wrap { position: relative; }
@@ -63,8 +64,16 @@
 </head>
 <body>
 <div class="container py-4">
-  <h1 class="mb-1">md2docu</h1>
-  <p class="text-muted mb-4">Markdown 파일을 PDF 또는 DOCX로 변환합니다.</p>
+  <div class="d-flex justify-content-between align-items-start mb-1">
+    <div>
+      <h1 class="mb-0">md2docu</h1>
+      <p class="text-muted mt-1 mb-0">Markdown 파일을 PDF 또는 DOCX로 변환합니다.</p>
+    </div>
+    <button class="btn btn-outline-secondary btn-sm mt-1" data-bs-toggle="modal" data-bs-target="#settingsModal">
+      &#9881; 출력 설정
+    </button>
+  </div>
+  <div class="mb-4"></div>
 
   <ul class="nav nav-tabs mb-3" id="inputTab">
     <li class="nav-item">
@@ -199,6 +208,96 @@ System.out.println("Hello, md2docu!");
   </div>
 
   <div id="error-box" class="alert alert-danger mt-3" style="display:none"></div>
+</div>
+
+<!-- 출력 설정 모달 -->
+<div class="modal fade" id="settingsModal" tabindex="-1" aria-labelledby="settingsModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="settingsModalLabel">출력 설정</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label fw-semibold">폰트 패밀리</label>
+            <input type="text" class="form-control form-control-sm" id="cfg-fontFamily"/>
+            <small class="text-muted">CSS font-family 형식. 예: <code>Malgun Gothic, Arial, sans-serif</code></small>
+          </div>
+          <div class="col-sm-3">
+            <label class="form-label">본문 크기 (pt)</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-bodyFontSize" min="6" max="72"/>
+          </div>
+          <div class="col-sm-3">
+            <label class="form-label">코드 크기 (pt)</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-codeFontSize" min="6" max="36"/>
+          </div>
+          <div class="col-sm-3">
+            <label class="form-label">줄 간격</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-lineHeight" min="1.0" max="3.0" step="0.1"/>
+          </div>
+        </div>
+
+        <hr class="my-3"/>
+        <p class="fw-semibold mb-2">헤딩 크기 (pt)</p>
+        <div class="row g-2">
+          <div class="col-4 col-sm-2">
+            <label class="form-label small">H1</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-h1" min="8" max="72"/>
+          </div>
+          <div class="col-4 col-sm-2">
+            <label class="form-label small">H2</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-h2" min="8" max="60"/>
+          </div>
+          <div class="col-4 col-sm-2">
+            <label class="form-label small">H3</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-h3" min="8" max="48"/>
+          </div>
+          <div class="col-4 col-sm-2">
+            <label class="form-label small">H4</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-h4" min="8" max="36"/>
+          </div>
+          <div class="col-4 col-sm-2">
+            <label class="form-label small">H5</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-h5" min="8" max="24"/>
+          </div>
+          <div class="col-4 col-sm-2">
+            <label class="form-label small">H6</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-h6" min="8" max="24"/>
+          </div>
+        </div>
+
+        <hr class="my-3"/>
+        <p class="fw-semibold mb-2">여백 (mm)</p>
+        <div class="row g-2">
+          <div class="col-6 col-sm-3">
+            <label class="form-label small">상단</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-marginTop" min="5" max="100"/>
+          </div>
+          <div class="col-6 col-sm-3">
+            <label class="form-label small">하단</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-marginBottom" min="5" max="100"/>
+          </div>
+          <div class="col-6 col-sm-3">
+            <label class="form-label small">좌측</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-marginLeft" min="5" max="100"/>
+          </div>
+          <div class="col-6 col-sm-3">
+            <label class="form-label small">우측</label>
+            <input type="number" class="form-control form-control-sm" id="cfg-marginRight" min="5" max="100"/>
+          </div>
+        </div>
+
+        <div id="settings-save-error" class="alert alert-danger py-2 mt-3 d-none small"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary btn-sm me-auto" id="btn-settings-reset">기본값으로</button>
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
+        <button class="btn btn-primary btn-sm" id="btn-settings-save">저장</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -370,6 +469,84 @@ System.out.println("Hello, md2docu!");
     let t;
     return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
   }
+
+  // ── 출력 설정 모달 ────────────────────────────────────────────────────────
+  const DEFAULT_SETTINGS = {
+    bodyFontFamily: 'Malgun Gothic, Noto Sans CJK, Arial, sans-serif',
+    bodyFontSizePt: 11, codeFontSizePt: 10, lineHeight: 1.6,
+    h1FontSizePt: 24, h2FontSizePt: 20, h3FontSizePt: 16,
+    h4FontSizePt: 14, h5FontSizePt: 12, h6FontSizePt: 11,
+    marginTopMm: 20, marginBottomMm: 20, marginLeftMm: 25, marginRightMm: 25
+  };
+
+  document.getElementById('settingsModal').addEventListener('show.bs.modal', async () => {
+    try {
+      const res = await fetch('/api/settings');
+      if (res.ok) applySettingsToForm(await res.json());
+    } catch(e) { /* 실패 시 현재 폼 값 유지 */ }
+  });
+
+  function applySettingsToForm(s) {
+    document.getElementById('cfg-fontFamily').value    = s.bodyFontFamily;
+    document.getElementById('cfg-bodyFontSize').value  = s.bodyFontSizePt;
+    document.getElementById('cfg-codeFontSize').value  = s.codeFontSizePt;
+    document.getElementById('cfg-lineHeight').value    = s.lineHeight;
+    document.getElementById('cfg-h1').value            = s.h1FontSizePt;
+    document.getElementById('cfg-h2').value            = s.h2FontSizePt;
+    document.getElementById('cfg-h3').value            = s.h3FontSizePt;
+    document.getElementById('cfg-h4').value            = s.h4FontSizePt;
+    document.getElementById('cfg-h5').value            = s.h5FontSizePt;
+    document.getElementById('cfg-h6').value            = s.h6FontSizePt;
+    document.getElementById('cfg-marginTop').value     = s.marginTopMm;
+    document.getElementById('cfg-marginBottom').value  = s.marginBottomMm;
+    document.getElementById('cfg-marginLeft').value    = s.marginLeftMm;
+    document.getElementById('cfg-marginRight').value   = s.marginRightMm;
+    document.getElementById('settings-save-error').classList.add('d-none');
+  }
+
+  function readSettingsFromForm() {
+    return {
+      bodyFontFamily:  document.getElementById('cfg-fontFamily').value.trim(),
+      bodyFontSizePt:  parseInt(document.getElementById('cfg-bodyFontSize').value),
+      codeFontSizePt:  parseInt(document.getElementById('cfg-codeFontSize').value),
+      lineHeight:      parseFloat(document.getElementById('cfg-lineHeight').value),
+      h1FontSizePt:    parseInt(document.getElementById('cfg-h1').value),
+      h2FontSizePt:    parseInt(document.getElementById('cfg-h2').value),
+      h3FontSizePt:    parseInt(document.getElementById('cfg-h3').value),
+      h4FontSizePt:    parseInt(document.getElementById('cfg-h4').value),
+      h5FontSizePt:    parseInt(document.getElementById('cfg-h5').value),
+      h6FontSizePt:    parseInt(document.getElementById('cfg-h6').value),
+      marginTopMm:     parseInt(document.getElementById('cfg-marginTop').value),
+      marginBottomMm:  parseInt(document.getElementById('cfg-marginBottom').value),
+      marginLeftMm:    parseInt(document.getElementById('cfg-marginLeft').value),
+      marginRightMm:   parseInt(document.getElementById('cfg-marginRight').value)
+    };
+  }
+
+  document.getElementById('btn-settings-save').addEventListener('click', async () => {
+    const errBox = document.getElementById('settings-save-error');
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(readSettingsFromForm())
+      });
+      if (res.ok) {
+        bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        errBox.textContent = '저장 실패: ' + (data.error || res.status);
+        errBox.classList.remove('d-none');
+      }
+    } catch(e) {
+      errBox.textContent = '저장 실패: ' + e.message;
+      errBox.classList.remove('d-none');
+    }
+  });
+
+  document.getElementById('btn-settings-reset').addEventListener('click', () => {
+    applySettingsToForm(DEFAULT_SETTINGS);
+  });
 </script>
 </body>
 </html>

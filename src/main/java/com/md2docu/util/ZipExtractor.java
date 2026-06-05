@@ -4,8 +4,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -40,9 +40,8 @@ public class ZipExtractor {
                         continue;
                     }
                     Files.createDirectories(outPath.getParent());
-                    byte[] data = readLimited(zis, maxExtractBytes - totalBytes);
-                    totalBytes += data.length;
-                    Files.write(outPath, data);
+                    long written = copyLimited(zis, outPath, maxExtractBytes - totalBytes);
+                    totalBytes += written;
                     zis.closeEntry();
                 }
             }
@@ -54,20 +53,21 @@ public class ZipExtractor {
         }
     }
 
-    private byte[] readLimited(ZipInputStream zis, long remaining) throws IOException {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        byte[] chunk = new byte[8192];
-        int n;
-        long written = 0;
-        while ((n = zis.read(chunk)) != -1) {
-            written += n;
-            if (written > remaining) {
-                throw new IOException(
-                    "ZIP 압축 해제 크기가 최대 허용량(" + (maxExtractBytes / 1024 / 1024) + "MB)을 초과했습니다.");
+    private long copyLimited(ZipInputStream zis, Path outPath, long remaining) throws IOException {
+        try (OutputStream out = Files.newOutputStream(outPath)) {
+            byte[] chunk = new byte[8192];
+            int n;
+            long written = 0;
+            while ((n = zis.read(chunk)) != -1) {
+                written += n;
+                if (written > remaining) {
+                    throw new IOException(
+                        "ZIP 압축 해제 크기가 최대 허용량(" + (maxExtractBytes / 1024 / 1024) + "MB)을 초과했습니다.");
+                }
+                out.write(chunk, 0, n);
             }
-            buf.write(chunk, 0, n);
+            return written;
         }
-        return buf.toByteArray();
     }
 
     private Path findMainMdFile(Path dir) throws IOException {

@@ -11,11 +11,14 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.logging.Logger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 @Component
 public class ZipExtractor {
+
+    private static final Logger log = Logger.getLogger(ZipExtractor.class.getName());
 
     @Value("${app.zip.max-extract-bytes:209715200}")
     private long maxExtractBytes;
@@ -88,8 +91,14 @@ public class ZipExtractor {
             Files.walk(dir)
                  .sorted(Comparator.reverseOrder())
                  .forEach(p -> {
-                     try { Files.deleteIfExists(p); } catch (IOException ignored) {}
+                     try {
+                         Files.deleteIfExists(p);
+                     } catch (IOException e) {
+                         log.warning("임시 파일 삭제 실패: " + p + " — " + e.getMessage());
+                     }
                  });
-        } catch (IOException ignored) {}
+        } catch (IOException e) {
+            log.warning("임시 디렉터리 정리 실패: " + dir + " — " + e.getMessage());
+        }
     }
 }

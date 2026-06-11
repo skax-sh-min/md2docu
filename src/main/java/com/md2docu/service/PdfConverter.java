@@ -18,18 +18,25 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
 public class PdfConverter {
 
+    private static final Logger log = Logger.getLogger(PdfConverter.class.getName());
     private static final String PDF_STATIC_CSS = loadCss();
 
     private static String loadCss() {
         try (InputStream is = PdfConverter.class.getResourceAsStream("/pdf-style.css")) {
-            return is != null ? new String(is.readAllBytes(), StandardCharsets.UTF_8) : "";
+            if (is == null) {
+                log.warning("pdf-style.css 를 클래스패스에서 찾을 수 없음 — 정적 스타일 없이 PDF 렌더링됨");
+                return "";
+            }
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
+            log.warning("pdf-style.css 읽기 실패 — " + e.getMessage());
             return "";
         }
     }

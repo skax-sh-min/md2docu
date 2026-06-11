@@ -70,12 +70,7 @@ public class ConvertController {
         ConvertOptions options = buildOptions(pageSize, includeImages, linkStrategy, remoteImageTimeout, generateToc, numberHeadings);
         ConvertResult result = convertService.convertFile(file, format, options);
 
-        return ResponseEntity.ok(Map.of(
-            "jobId", result.getJobId(),
-            "downloadUrl", result.getDownloadUrl(),
-            "fileName", result.getFileName(),
-            "warnings", result.getWarnings()
-        ));
+        return ResponseEntity.ok(toResponseMap(result));
     }
 
     /**
@@ -106,12 +101,7 @@ public class ConvertController {
 
         ConvertResult result = convertService.convertText(markdown, format, options);
 
-        return ResponseEntity.ok(Map.of(
-            "jobId", result.getJobId(),
-            "downloadUrl", result.getDownloadUrl(),
-            "fileName", result.getFileName(),
-            "warnings", result.getWarnings()
-        ));
+        return ResponseEntity.ok(toResponseMap(result));
     }
 
     /**
@@ -171,6 +161,15 @@ public class ConvertController {
     @ExceptionHandler(IOException.class)
     public ResponseEntity<Map<String, String>> handleIoException(IOException e) {
         return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
+
+    private Map<String, Object> toResponseMap(ConvertResult r) {
+        return Map.of(
+            "jobId",       r.getJobId(),
+            "downloadUrl", r.getDownloadUrl(),
+            "fileName",    r.getFileName(),
+            "warnings",    r.getWarnings()
+        );
     }
 
     private ConvertOptions buildOptions(String pageSize, boolean includeImages, String linkStrategy,

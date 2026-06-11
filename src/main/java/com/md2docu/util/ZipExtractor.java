@@ -6,16 +6,21 @@ import org.springframework.stereotype.Component;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.logging.Logger;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 @Component
 public class ZipExtractor {
+
+    private static final Logger log = Logger.getLogger(ZipExtractor.class.getName());
 
     @Value("${app.zip.max-extract-bytes:209715200}")
     private long maxExtractBytes;
@@ -72,10 +77,10 @@ public class ZipExtractor {
 
     private Path findMainMdFile(Path dir) throws IOException {
         List<Path> mdFiles = new ArrayList<>();
-        Files.walk(dir)
-             .filter(p -> p.toString().toLowerCase().endsWith(".md"))
-             .forEach(mdFiles::add);
-
+        try (Stream<Path> stream = Files.walk(dir)) {
+            stream.filter(p -> p.toString().toLowerCase().endsWith(".md"))
+                  .forEach(mdFiles::add);
+        }
         if (mdFiles.isEmpty()) return null;
         // 경로 깊이가 얕은 파일 우선 (루트 레벨의 .md 파일)
         mdFiles.sort(Comparator.comparingInt(p -> dir.relativize(p).getNameCount()));
@@ -84,12 +89,17 @@ public class ZipExtractor {
 
     public void cleanup(Path dir) {
         if (dir == null || !Files.exists(dir)) return;
-        try {
-            Files.walk(dir)
-                 .sorted(Comparator.reverseOrder())
-                 .forEach(p -> {
-                     try { Files.deleteIfExists(p); } catch (IOException ignored) {}
-                 });
-        } catch (IOException ignored) {}
+        try (Stream<Path> stream = Files.walk(dir)) {
+            stream.sorted(Comparator.reverseOrder())
+                  .forEach(p -> {
+                      try {
+                          Files.deleteIfExists(p);
+                      } catch (IOException e) {
+                          log.warning("임시 파일 삭제 실패: " + p + " — " + e.getMessage());
+                      }
+                  });
+        } catch (IOException | UncheckedIOException e) {
+            log.warning("임시 디렉터리 정리 실패: " + dir + " — " + e.getMessage());
+        }
     }
 }

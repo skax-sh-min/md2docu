@@ -14,13 +14,32 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
 public class PdfConverter {
+
+    private static final Logger log = Logger.getLogger(PdfConverter.class.getName());
+    private static final String PDF_STATIC_CSS = loadCss();
+
+    private static String loadCss() {
+        try (InputStream is = PdfConverter.class.getResourceAsStream("/pdf-style.css")) {
+            if (is == null) {
+                log.warning("pdf-style.css 를 클래스패스에서 찾을 수 없음 — 정적 스타일 없이 PDF 렌더링됨");
+                return "";
+            }
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            log.warning("pdf-style.css 읽기 실패 — " + e.getMessage());
+            return "";
+        }
+    }
 
     private static final Pattern IMG_PATTERN =
         Pattern.compile("<img([^>]*?)\\ssrc=\"([^\"]+)\"([^>]*?)/?>");
@@ -145,26 +164,12 @@ public class PdfConverter {
                       + s.getMarginBottomMm() + "mm " + s.getMarginLeftMm() + "mm";
         return "@page { size: " + options.getPageSize().toUpperCase() + "; margin: " + margin + "; }\n"
             + "body { font-family: " + s.getBodyFontFamily() + "; font-size: " + s.getBodyFontSizePt() + "pt; line-height: " + s.getLineHeight() + "; color: #333; }\n"
-            + "p { margin: 0 0 8pt 0; }\n"
-            + "h1 { font-size: " + s.getH1FontSizePt() + "pt; border-bottom: 2px solid #333; padding-bottom: 4px; margin: 28pt 0 20pt 0; }\n"
-            + "h2 { font-size: " + s.getH2FontSizePt() + "pt; border-bottom: 1px solid #ccc; padding-bottom: 2px; margin: 24pt 0 12pt 0; }\n"
-            + "h3 { font-size: " + s.getH3FontSizePt() + "pt; margin: 20pt 0 10pt 0; }\n"
-            + "h4, h5, h6 { font-size: " + s.getH4FontSizePt() + "pt; margin: 16pt 0 8pt 0; }\n"
-            + ".toc { margin: 20pt 0 28pt 0; padding: 12pt 16pt; border: 1px solid #ddd; background: #f9f9f9; }\n"
-            + ".toc-item { margin: 3pt 0; line-height: 1.6; }\n"
-            + "pre { background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; padding: 10px 14px; font-family: 'Courier New', monospace; font-size: " + s.getCodeFontSizePt() + "pt; white-space: pre-wrap; word-break: break-all; }\n"
-            + "code { font-family: 'Courier New', monospace; font-size: " + s.getCodeFontSizePt() + "pt; background: #f0f0f0; padding: 1px 4px; border-radius: 2px; }\n"
-            + "pre code { background: none; padding: 0; }\n"
-            + "table { border-collapse: collapse; width: 100%; margin: 12px 0; }\n"
-            + "th, td { border: 1px solid #ccc; padding: 6px 10px; }\n"
-            + "th { background: #f0f0f0; font-weight: bold; }\n"
-            + "blockquote { border-left: 4px solid #ccc; margin: 8px 0; padding: 4px 14px; color: #666; background: #fafafa; }\n"
-            + "img { max-width: 100%; height: auto; }\n"
-            + "a { color: #0066cc; }\n"
-            + "hr { border: none; border-top: 1px solid #ccc; margin: 16px 0; }\n"
-            + ".img-error { color: #c00; font-style: italic; font-size: 9pt; }\n"
-            + ".img-removed { color: #999; font-style: italic; font-size: 9pt; }\n"
-            + ".attach-warn { color: #c60; font-size: 9pt; }\n";
+            + "h1 { font-size: " + s.getH1FontSizePt() + "pt; }\n"
+            + "h2 { font-size: " + s.getH2FontSizePt() + "pt; }\n"
+            + "h3 { font-size: " + s.getH3FontSizePt() + "pt; }\n"
+            + "h4, h5, h6 { font-size: " + s.getH4FontSizePt() + "pt; }\n"
+            + "pre, code { font-size: " + s.getCodeFontSizePt() + "pt; }\n"
+            + PDF_STATIC_CSS;
     }
 
     private String escapeHtml(String s) {

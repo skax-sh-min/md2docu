@@ -67,7 +67,7 @@
   <div class="d-flex justify-content-between align-items-start mb-1">
     <div>
       <h1 class="mb-0">md2docu</h1>
-      <p class="text-muted mt-1 mb-0">Markdown 파일을 PDF 또는 DOCX로 변환합니다.</p>
+      <p class="text-muted mt-1 mb-0">Markdown → PDF / DOCX 변환 &nbsp;·&nbsp; DOCX → Markdown 역변환</p>
     </div>
     <button class="btn btn-outline-secondary btn-sm mt-1" data-bs-toggle="modal" data-bs-target="#settingsModal">
       &#9881; 출력 설정
@@ -81,6 +81,9 @@
     </li>
     <li class="nav-item">
       <button class="nav-link" data-tab="file">파일 업로드</button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-tab="docx2md">DOCX → MD</button>
     </li>
   </ul>
 
@@ -139,8 +142,18 @@ System.out.println("Hello, md2docu!");
     <div id="file-info" class="d-none alert alert-info py-2 px-3 fw-semibold"></div>
   </div>
 
+  <!-- DOCX → MD 탭 -->
+  <div id="tab-docx2md" style="display:none">
+    <div class="drop-zone mb-3" id="drop-zone-docx">
+      <p class="mb-1">📄 .docx 파일을 여기에 드래그하거나 클릭하세요</p>
+      <small class="text-muted">제목, 본문, 표, 목록, 하이퍼링크, 굵기/기울기를 Markdown으로 변환합니다</small>
+      <input type="file" id="file-input-docx" accept=".docx" style="display:none"/>
+    </div>
+    <div id="file-info-docx" class="d-none alert alert-info py-2 px-3 fw-semibold"></div>
+  </div>
+
   <!-- 변환 옵션 -->
-  <div class="card mb-3">
+  <div class="card mb-3" id="convert-options">
     <div class="card-header py-2 fw-semibold">변환 옵션</div>
     <div class="card-body py-3">
       <div id="pdf-warning" class="alert alert-warning py-2 mb-3 d-none">
@@ -192,8 +205,7 @@ System.out.println("Hello, md2docu!");
   </div>
 
   <button class="btn btn-primary px-5 py-2" id="btn-convert" style="min-width:160px">
-    <span class="spinner-border me-1 d-none" id="spinner"></span>
-    변환하기
+    <span class="spinner-border me-1 d-none" id="spinner"></span><span id="btn-label">변환하기</span>
   </button>
 
   <!-- 결과 -->
@@ -309,12 +321,19 @@ System.out.println("Hello, md2docu!");
 
 <script>
   // ── 탭 전환 ──────────────────────────────────────────────────────────────
+  const convertOptions = document.getElementById('convert-options');
+  const btnConvert     = document.getElementById('btn-convert');
+
   document.querySelectorAll('[data-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('[data-tab]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      document.getElementById('tab-editor').style.display = btn.dataset.tab === 'editor' ? '' : 'none';
-      document.getElementById('tab-file').style.display   = btn.dataset.tab === 'file'   ? '' : 'none';
+      const tab = btn.dataset.tab;
+      document.getElementById('tab-editor').style.display  = tab === 'editor'   ? '' : 'none';
+      document.getElementById('tab-file').style.display    = tab === 'file'     ? '' : 'none';
+      document.getElementById('tab-docx2md').style.display = tab === 'docx2md'  ? '' : 'none';
+      convertOptions.style.display = tab === 'docx2md' ? 'none' : '';
+      document.getElementById('btn-label').textContent = tab === 'docx2md' ? 'Markdown으로 변환' : '변환하기';
     });
   });
 
@@ -351,6 +370,33 @@ System.out.println("Hello, md2docu!");
     if (!file) return;
     selectedFile = file;
     const info = document.getElementById('file-info');
+    info.textContent = `📄 ${file.name}  (${(file.size / 1024).toFixed(1)} KB)`;
+    info.classList.remove('d-none');
+  }
+
+  // ── DOCX 드롭존 ───────────────────────────────────────────────────────────
+  let selectedDocxFile = null;
+  const dropZoneDocx = document.getElementById('drop-zone-docx');
+  const fileInputDocx = document.getElementById('file-input-docx');
+
+  dropZoneDocx.addEventListener('click', () => fileInputDocx.click());
+  dropZoneDocx.addEventListener('dragover', e => { e.preventDefault(); dropZoneDocx.classList.add('dragover'); });
+  dropZoneDocx.addEventListener('dragleave', () => dropZoneDocx.classList.remove('dragover'));
+  dropZoneDocx.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZoneDocx.classList.remove('dragover');
+    handleDocxFile(e.dataTransfer.files[0]);
+  });
+  fileInputDocx.addEventListener('change', () => handleDocxFile(fileInputDocx.files[0]));
+
+  function handleDocxFile(file) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.docx')) {
+      alert('.docx 파일만 업로드할 수 있습니다.');
+      return;
+    }
+    selectedDocxFile = file;
+    const info = document.getElementById('file-info-docx');
     info.textContent = `📄 ${file.name}  (${(file.size / 1024).toFixed(1)} KB)`;
     info.classList.remove('d-none');
   }
@@ -395,7 +441,14 @@ System.out.println("Hello, md2docu!");
     try {
       let data;
 
-      if (activeTab === 'editor') {
+      if (activeTab === 'docx2md') {
+        if (!selectedDocxFile) { alert('.docx 파일을 선택해 주세요.'); setLoading(false); return; }
+        const form = new FormData();
+        form.append('file', selectedDocxFile);
+        const res = await fetch('/api/convert/md', { method: 'POST', body: form });
+        data = await res.json();
+        if (!res.ok) throw new Error(data.error || '변환 오류');
+      } else if (activeTab === 'editor') {
         const markdown = document.getElementById('editor').value;
         const res = await fetch(`/api/convert/${format}/text`, {
           method: 'POST',

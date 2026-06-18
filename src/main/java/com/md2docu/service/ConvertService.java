@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -26,6 +27,7 @@ public class ConvertService {
     private final MarkdownService markdownService;
     private final PdfConverter pdfConverter;
     private final DocxConverter docxConverter;
+    private final DocxToMarkdownConverter docxToMarkdownConverter;
     private final ZipExtractor zipExtractor;
 
     @Value("${app.convert.temp-expiry-seconds:3600}")
@@ -37,10 +39,12 @@ public class ConvertService {
     private final Map<String, StoredResult> store = new ConcurrentHashMap<>();
 
     public ConvertService(MarkdownService markdownService, PdfConverter pdfConverter,
-                          DocxConverter docxConverter, ZipExtractor zipExtractor) {
+                          DocxConverter docxConverter, DocxToMarkdownConverter docxToMarkdownConverter,
+                          ZipExtractor zipExtractor) {
         this.markdownService = markdownService;
         this.pdfConverter = pdfConverter;
         this.docxConverter = docxConverter;
+        this.docxToMarkdownConverter = docxToMarkdownConverter;
         this.zipExtractor = zipExtractor;
     }
 
@@ -61,6 +65,26 @@ public class ConvertService {
 
     public ConvertResult convertText(String markdown, String format, ConvertOptions options) throws IOException {
         return convertMarkdown(markdown, format, options, null, "document");
+    }
+
+    // ── DOCX → Markdown 변환 ─────────────────────────────────────────────────
+
+    public ConvertResult convertDocxToMd(MultipartFile file) throws IOException {
+        String name = file.getOriginalFilename() != null ? file.getOriginalFilename() : "document.docx";
+        if (!name.toLowerCase().endsWith(".docx")) {
+            throw new IOException("지원하지 않는 파일 형식입니다. .docx 파일만 지원합니다.");
+        }
+        List<ConvertWarning> warnings = new ArrayList<>();
+        String markdown = docxToMarkdownConverter.convert(file.getBytes(), warnings);
+
+        ConvertResult result = new ConvertResult();
+        result.setJobId(UUID.randomUUID().toString());
+        result.setFileBytes(markdown.getBytes(StandardCharsets.UTF_8));
+        result.setFileName(baseName(name) + ".md");
+        result.setContentType("text/markdown; charset=UTF-8");
+        result.setWarnings(warnings);
+        result.setDownloadUrl("/api/download/" + result.getJobId());
+        return storeResult(result);
     }
 
     // ── ZIP 변환 ─────────────────────────────────────────────────────────────
@@ -109,13 +133,17 @@ public class ConvertService {
         result.setContentType(contentType);
         result.setWarnings(warnings);
 
+        return storeResult(result);
+    }
+
+    private ConvertResult storeResult(ConvertResult result) {
         if (store.size() >= MAX_STORE_SIZE) {
             store.entrySet().stream()
                 .min(Comparator.comparing(e -> e.getValue().createdAt()))
                 .map(Map.Entry::getKey)
                 .ifPresent(store::remove);
         }
-        store.put(jobId, new StoredResult(result, Instant.now()));
+        store.put(result.getJobId(), new StoredResult(result, Instant.now()));
         return result;
     }
 

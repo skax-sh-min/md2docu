@@ -8,30 +8,39 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.math.BigInteger;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
 public class DocxToMarkdownConverter {
 
-    public String convert(byte[] docxBytes, List<ConvertWarning> warnings) throws IOException {
+    public record Output(String markdown, Map<String, byte[]> images) {}
+
+    private record ConvertContext(
+        List<ConvertWarning> warnings,
+        Map<String, byte[]> images,
+        IdentityHashMap<XWPFPictureData, String> picNames
+    ) {}
+
+    public Output convert(byte[] docxBytes, List<ConvertWarning> warnings) throws IOException {
+        ConvertContext ctx = new ConvertContext(warnings, new LinkedHashMap<>(), new IdentityHashMap<>());
         try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(docxBytes))) {
             StringBuilder sb = new StringBuilder();
             for (IBodyElement el : doc.getBodyElements()) {
                 if (el instanceof XWPFParagraph para) {
-                    appendParagraph(doc, para, sb, warnings);
+                    appendParagraph(doc, para, sb, ctx);
                 } else if (el instanceof XWPFTable table) {
-                    appendTable(table, sb, warnings);
+                    appendTable(table, sb, ctx);
                 }
             }
-            return sb.toString().stripTrailing() + "\n";
+            return new Output(sb.toString().stripTrailing() + "\n", ctx.images());
         }
     }
 
     private void appendParagraph(XWPFDocument doc, XWPFParagraph para,
-                                  StringBuilder sb, List<ConvertWarning> warnings) {
+                                  StringBuilder sb, ConvertContext ctx) {
         int heading = headingLevel(doc, para);
-        String text = paragraphText(para, warnings);
+        String text = paragraphText(para, ctx);
 
         if (heading > 0) {
             if (!text.isBlank()) {
@@ -55,12 +64,15 @@ public class DocxToMarkdownConverter {
         }
     }
 
-    private String paragraphText(XWPFParagraph para, List<ConvertWarning> warnings) {
+    private String paragraphText(XWPFParagraph para, ConvertContext ctx) {
         StringBuilder sb = new StringBuilder();
         for (XWPFRun run : para.getRuns()) {
-            if (!run.getEmbeddedPictures().isEmpty()) {
-                sb.append("![이미지](이미지)");
-                warnings.add(new ConvertWarning("IMAGE_SKIPPED", "이미지", "DOCX 이미지는 텍스트로 변환되지 않습니다."));
+            List<XWPFPicture> pics = run.getEmbeddedPictures();
+            if (!pics.isEmpty()) {
+                for (XWPFPicture pic : pics) {
+                    String filename = resolveImageFilename(pic.getPictureData(), ctx);
+                    sb.append("![이미지](").append(filename).append(")");
+                }
                 continue;
             }
 
@@ -85,6 +97,16 @@ public class DocxToMarkdownConverter {
             else                sb.append(text);
         }
         return sb.toString();
+    }
+
+    private String resolveImageFilename(XWPFPictureData picData, ConvertContext ctx) {
+        return ctx.picNames().computeIfAbsent(picData, pd -> {
+            String ext = pd.suggestFileExtension();
+            String name = "image_" + (ctx.images().size() + 1)
+                        + (ext.isEmpty() ? "" : "." + ext);
+            ctx.images().put(name, pd.getData());
+            return name;
+        });
     }
 
     private String resolveHyperlinkUrl(XWPFDocument doc, XWPFHyperlinkRun run) {
@@ -137,7 +159,7 @@ public class DocxToMarkdownConverter {
         }
     }
 
-    private void appendTable(XWPFTable table, StringBuilder sb, List<ConvertWarning> warnings) {
+    private void appendTable(XWPFTable table, StringBuilder sb, ConvertContext ctx) {
         List<XWPFTableRow> rows = table.getRows();
         if (rows.isEmpty()) return;
 
@@ -147,7 +169,7 @@ public class DocxToMarkdownConverter {
             sb.append("|");
             for (XWPFTableCell cell : row.getTableCells()) {
                 String text = cell.getParagraphs().stream()
-                    .map(p -> paragraphText(p, warnings).trim())
+                    .map(p -> paragraphText(p, ctx).trim())
                     .filter(t -> !t.isEmpty())
                     .collect(Collectors.joining(" "));
                 sb.append(" ").append(text).append(" |");

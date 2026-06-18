@@ -12,9 +12,12 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.*;
@@ -75,16 +78,39 @@ public class ConvertService {
             throw new IOException("지원하지 않는 파일 형식입니다. .docx 파일만 지원합니다.");
         }
         List<ConvertWarning> warnings = new ArrayList<>();
-        String markdown = docxToMarkdownConverter.convert(file.getBytes(), warnings);
+        DocxToMarkdownConverter.Output output = docxToMarkdownConverter.convert(file.getBytes(), warnings);
 
+        String base = baseName(name);
         ConvertResult result = new ConvertResult();
         result.setJobId(UUID.randomUUID().toString());
-        result.setFileBytes(markdown.getBytes(StandardCharsets.UTF_8));
-        result.setFileName(baseName(name) + ".md");
-        result.setContentType("text/markdown; charset=UTF-8");
         result.setWarnings(warnings);
         result.setDownloadUrl("/api/download/" + result.getJobId());
+
+        if (output.images().isEmpty()) {
+            result.setFileBytes(output.markdown().getBytes(StandardCharsets.UTF_8));
+            result.setFileName(base + ".md");
+            result.setContentType("text/markdown; charset=UTF-8");
+        } else {
+            result.setFileBytes(createZip(base + ".md", output.markdown(), output.images()));
+            result.setFileName(base + ".zip");
+            result.setContentType("application/zip");
+        }
         return storeResult(result);
+    }
+
+    private byte[] createZip(String mdFileName, String markdown, Map<String, byte[]> images) throws IOException {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(bos)) {
+            zos.putNextEntry(new ZipEntry(mdFileName));
+            zos.write(markdown.getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+            for (Map.Entry<String, byte[]> img : images.entrySet()) {
+                zos.putNextEntry(new ZipEntry(img.getKey()));
+                zos.write(img.getValue());
+                zos.closeEntry();
+            }
+        }
+        return bos.toByteArray();
     }
 
     // ── ZIP 변환 ─────────────────────────────────────────────────────────────

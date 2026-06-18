@@ -76,8 +76,8 @@ public class DocxToMarkdownConverter {
                 continue;
             }
 
-            String text = run.getText(0);
-            if (text == null || text.isEmpty()) continue;
+            String text = runText(run);
+            if (text.isEmpty()) continue;
 
             if (run instanceof XWPFHyperlinkRun h) {
                 String url = resolveHyperlinkUrl(para.getDocument(), h);
@@ -96,6 +96,15 @@ public class DocxToMarkdownConverter {
             else if (italic)    sb.append("*").append(text).append("*");
             else                sb.append(text);
         }
+        return sb.toString();
+    }
+
+    private String runText(XWPFRun run) {
+        int size = run.getCTR().sizeOfTArray();
+        if (size == 0) return "";
+        if (size == 1) { String t = run.getText(0); return t != null ? t : ""; }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < size; i++) { String t = run.getText(i); if (t != null) sb.append(t); }
         return sb.toString();
     }
 

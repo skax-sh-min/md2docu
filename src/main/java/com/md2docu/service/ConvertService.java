@@ -141,7 +141,7 @@ public class ConvertService {
         for (int i = 0; i < h2Titles.size(); i++) {
             cover.append(String.format("%d. [%s](%s)\n", i + 1, h2Titles.get(i), chapterFiles.get(i)));
         }
-        entries.put(base + ".md", cover.toString().getBytes(StandardCharsets.UTF_8));
+        entries.put("00_" + base + ".md", cover.toString().getBytes(StandardCharsets.UTF_8));
 
         // ── 챕터 파일 ────────────────────────────────────────────────────────
         for (int i = 0; i < h2Positions.size(); i++) {

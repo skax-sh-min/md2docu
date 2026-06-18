@@ -77,10 +77,10 @@
 
   <ul class="nav nav-tabs mb-3" id="inputTab">
     <li class="nav-item">
-      <button class="nav-link active" data-tab="editor">텍스트 입력</button>
+      <button class="nav-link active" data-tab="editor">MD 형식의 텍스트 입력</button>
     </li>
     <li class="nav-item">
-      <button class="nav-link" data-tab="file">파일 업로드</button>
+      <button class="nav-link" data-tab="file">MD 파일 업로드</button>
     </li>
     <li class="nav-item">
       <button class="nav-link" data-tab="docx2md">DOCX → MD</button>
@@ -150,11 +150,21 @@ System.out.println("Hello, md2docu!");
       <input type="file" id="file-input-docx" accept=".docx" style="display:none"/>
     </div>
     <div id="file-info-docx" class="d-none alert alert-info py-2 px-3 fw-semibold"></div>
-    <div class="form-check mt-2">
-      <input class="form-check-input" type="checkbox" id="opt-split-chapter"/>
-      <label class="form-check-label small" for="opt-split-chapter">
-        챕터별 분리 — <code>##</code> 단위로 파일을 나누고 표지·목차 파일을 별도 생성합니다 (ZIP으로 다운로드)
-      </label>
+    <div class="card mb-3">
+      <div class="card-header py-2 fw-semibold">변환 옵션</div>
+      <div class="card-body py-3">
+        <div class="row g-3 align-items-end">
+          <div class="col-sm-4">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="opt-split-chapter"/>
+              <label class="form-check-label small" for="opt-split-chapter">챕터별 분리</label>
+            </div>
+            <div class="text-muted mt-1" style="font-size:0.78rem">
+              <code>##</code> 단위로 파일을 나누고 표지·목차를 별도 생성합니다 (ZIP 다운로드)
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

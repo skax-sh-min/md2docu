@@ -141,8 +141,8 @@ public class ConvertController {
      */
     @PostMapping("/convert/md")
     public ResponseEntity<Map<String, Object>> convertToMarkdown(
-            @RequestParam MultipartFile file,
-            @RequestParam(defaultValue = "false") boolean splitByChapter) throws IOException {
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "splitByChapter", defaultValue = "false") boolean splitByChapter) throws IOException {
         ConvertResult result = convertService.convertDocxToMd(file, splitByChapter);
         return ResponseEntity.ok(toResponseMap(result));
     }

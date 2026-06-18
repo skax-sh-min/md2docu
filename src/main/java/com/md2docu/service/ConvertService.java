@@ -72,7 +72,7 @@ public class ConvertService {
 
     // ── DOCX → Markdown 변환 ─────────────────────────────────────────────────
 
-    public ConvertResult convertDocxToMd(MultipartFile file) throws IOException {
+    public ConvertResult convertDocxToMd(MultipartFile file, boolean splitByChapter) throws IOException {
         String name = file.getOriginalFilename() != null ? file.getOriginalFilename() : "document.docx";
         if (!name.toLowerCase().endsWith(".docx")) {
             throw new IOException("지원하지 않는 파일 형식입니다. .docx 파일만 지원합니다.");
@@ -86,27 +86,95 @@ public class ConvertService {
         result.setWarnings(warnings);
         result.setDownloadUrl("/api/download/" + result.getJobId());
 
-        if (output.images().isEmpty()) {
+        if (splitByChapter) {
+            Map<String, byte[]> entries = buildChapterEntries(output, base);
+            result.setFileBytes(createZip(entries));
+            result.setFileName(base + ".zip");
+            result.setContentType("application/zip");
+        } else if (output.images().isEmpty()) {
             result.setFileBytes(output.markdown().getBytes(StandardCharsets.UTF_8));
             result.setFileName(base + ".md");
             result.setContentType("text/markdown; charset=UTF-8");
         } else {
-            result.setFileBytes(createZip(base + ".md", output.markdown(), output.images()));
+            Map<String, byte[]> entries = new LinkedHashMap<>();
+            entries.put(base + ".md", output.markdown().getBytes(StandardCharsets.UTF_8));
+            entries.putAll(output.images());
+            result.setFileBytes(createZip(entries));
             result.setFileName(base + ".zip");
             result.setContentType("application/zip");
         }
         return storeResult(result);
     }
 
-    private byte[] createZip(String mdFileName, String markdown, Map<String, byte[]> images) throws IOException {
+    private Map<String, byte[]> buildChapterEntries(DocxToMarkdownConverter.Output output, String base) {
+        String[] lines = output.markdown().split("\n", -1);
+
+        List<Integer> h2Positions = new ArrayList<>();
+        List<String> h2Titles    = new ArrayList<>();
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].startsWith("## ")) {
+                h2Positions.add(i);
+                h2Titles.add(lines[i].substring(3).trim());
+            }
+        }
+
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+
+        if (h2Positions.isEmpty()) {
+            // ## 없으면 단일 파일로 처리
+            entries.put(base + ".md", output.markdown().getBytes(StandardCharsets.UTF_8));
+            entries.putAll(output.images());
+            return entries;
+        }
+
+        // ── 표지 파일 (## 이전 내용 + 목차) ─────────────────────────────────
+        StringBuilder cover = new StringBuilder();
+        for (int i = 0; i < h2Positions.get(0); i++) {
+            cover.append(lines[i]).append("\n");
+        }
+        List<String> chapterFiles = new ArrayList<>();
+        for (int i = 0; i < h2Titles.size(); i++) {
+            chapterFiles.add(String.format("%02d_%s.md", i + 1, toSlug(h2Titles.get(i))));
+        }
+
+        cover.append("\n## 목차\n\n");
+        for (int i = 0; i < h2Titles.size(); i++) {
+            cover.append(String.format("%d. [%s](%s)\n", i + 1, h2Titles.get(i), chapterFiles.get(i)));
+        }
+        entries.put(base + ".md", cover.toString().getBytes(StandardCharsets.UTF_8));
+
+        // ── 챕터 파일 ────────────────────────────────────────────────────────
+        for (int i = 0; i < h2Positions.size(); i++) {
+            int from = h2Positions.get(i);
+            int to   = (i + 1 < h2Positions.size()) ? h2Positions.get(i + 1) : lines.length;
+            StringBuilder chapter = new StringBuilder();
+            for (int j = from; j < to; j++) {
+                chapter.append(lines[j]).append("\n");
+            }
+            entries.put(chapterFiles.get(i), chapter.toString().getBytes(StandardCharsets.UTF_8));
+        }
+
+        // ── 이미지 ────────────────────────────────────────────────────────────
+        entries.putAll(output.images());
+        return entries;
+    }
+
+    private String toSlug(String title) {
+        String slug = title.trim()
+            .replaceAll("[\\s]+", "_")
+            .replaceAll("[/\\\\:*?\"<>|]", "")
+            .replaceAll("_+", "_")
+            .replaceAll("^_|_$", "");
+        if (slug.isEmpty()) return "chapter";
+        return slug.length() > 50 ? slug.substring(0, 50) : slug;
+    }
+
+    private byte[] createZip(Map<String, byte[]> entries) throws IOException {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try (ZipOutputStream zos = new ZipOutputStream(bos)) {
-            zos.putNextEntry(new ZipEntry(mdFileName));
-            zos.write(markdown.getBytes(StandardCharsets.UTF_8));
-            zos.closeEntry();
-            for (Map.Entry<String, byte[]> img : images.entrySet()) {
-                zos.putNextEntry(new ZipEntry(img.getKey()));
-                zos.write(img.getValue());
+            for (Map.Entry<String, byte[]> e : entries.entrySet()) {
+                zos.putNextEntry(new ZipEntry(e.getKey()));
+                zos.write(e.getValue());
                 zos.closeEntry();
             }
         }

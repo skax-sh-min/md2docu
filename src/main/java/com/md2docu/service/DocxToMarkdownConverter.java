@@ -102,7 +102,7 @@ public class DocxToMarkdownConverter {
     private String resolveImageFilename(XWPFPictureData picData, ConvertContext ctx) {
         return ctx.picNames().computeIfAbsent(picData, pd -> {
             String ext = pd.suggestFileExtension();
-            String name = "image_" + (ctx.images().size() + 1)
+            String name = "images/image_" + (ctx.images().size() + 1)
                         + (ext.isEmpty() ? "" : "." + ext);
             ctx.images().put(name, pd.getData());
             return name;

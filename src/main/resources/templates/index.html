@@ -150,6 +150,12 @@ System.out.println("Hello, md2docu!");
       <input type="file" id="file-input-docx" accept=".docx" style="display:none"/>
     </div>
     <div id="file-info-docx" class="d-none alert alert-info py-2 px-3 fw-semibold"></div>
+    <div class="form-check mt-2">
+      <input class="form-check-input" type="checkbox" id="opt-split-chapter"/>
+      <label class="form-check-label small" for="opt-split-chapter">
+        챕터별 분리 — <code>##</code> 단위로 파일을 나누고 표지·목차 파일을 별도 생성합니다 (ZIP으로 다운로드)
+      </label>
+    </div>
   </div>
 
   <!-- 변환 옵션 -->
@@ -443,8 +449,10 @@ System.out.println("Hello, md2docu!");
 
       if (activeTab === 'docx2md') {
         if (!selectedDocxFile) { alert('.docx 파일을 선택해 주세요.'); setLoading(false); return; }
+        const splitByChapter = document.getElementById('opt-split-chapter').checked;
         const form = new FormData();
         form.append('file', selectedDocxFile);
+        form.append('splitByChapter', splitByChapter);
         const res = await fetch('/api/convert/md', { method: 'POST', body: form });
         data = await res.json();
         if (!res.ok) throw new Error(data.error || '변환 오류');

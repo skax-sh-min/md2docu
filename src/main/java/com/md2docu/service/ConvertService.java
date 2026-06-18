@@ -73,7 +73,10 @@ public class ConvertService {
     // ── DOCX → Markdown 변환 ─────────────────────────────────────────────────
 
     public ConvertResult convertDocxToMd(MultipartFile file, boolean splitByChapter) throws IOException {
-        String name = file.getOriginalFilename() != null ? file.getOriginalFilename() : "document.docx";
+        String raw  = file.getOriginalFilename() != null ? file.getOriginalFilename() : "document.docx";
+        int    sep  = Math.max(raw.lastIndexOf('/'), raw.lastIndexOf('\\'));
+        String name = sep >= 0 ? raw.substring(sep + 1) : raw;
+        if (name.isEmpty()) name = "document.docx";
         if (!name.toLowerCase().endsWith(".docx")) {
             throw new IOException("지원하지 않는 파일 형식입니다. .docx 파일만 지원합니다.");
         }

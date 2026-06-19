@@ -85,6 +85,8 @@ public class DocxToMarkdownConverter {
                     sb.append("[").append(text).append("](").append(url).append(")");
                 } else {
                     sb.append(text);
+                    ctx.warnings().add(new ConvertWarning("HYPERLINK_UNRESOLVED", text,
+                        "하이퍼링크 URL을 확인할 수 없어 텍스트로 대체했습니다: " + text));
                 }
                 continue;
             }

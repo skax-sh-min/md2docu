@@ -25,6 +25,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import java.nio.file.Path;
@@ -137,7 +139,8 @@ public class ConvertService {
         if (rawUrl.toLowerCase().endsWith(".zip")) {
             return convertZip(content, format, options);
         }
-        return convertMarkdown(new String(content, StandardCharsets.UTF_8), format, options, null, base);
+        String markdown = resolveRelativeImageUrls(new String(content, StandardCharsets.UTF_8), rawUrl);
+        return convertMarkdown(markdown, format, options, null, base);
     }
 
     private String resolveRawUrl(String url) {
@@ -151,6 +154,28 @@ public class ConvertService {
             return url.replaceFirst("/-/blob/", "/-/raw/");
         }
         return url;
+    }
+
+    private static final Pattern IMG_URL_PATTERN =
+        Pattern.compile("!\\[([^\\]]*)\\]\\(([^)\\s\"'<>]+)((?:\\s[^)]*)?)\\)");
+
+    private String resolveRelativeImageUrls(String markdown, String mdUrl) {
+        URI base;
+        try { base = URI.create(mdUrl); } catch (IllegalArgumentException e) { return markdown; }
+        Matcher m = IMG_URL_PATTERN.matcher(markdown);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            String alt  = m.group(1);
+            String src  = m.group(2);
+            String rest = m.group(3);   // optional title
+            String resolved = src;
+            if (!src.startsWith("http://") && !src.startsWith("https://") && !src.startsWith("data:")) {
+                try { resolved = base.resolve(src).toString(); } catch (IllegalArgumentException ignored) {}
+            }
+            m.appendReplacement(sb, Matcher.quoteReplacement("![" + alt + "](" + resolved + rest + ")"));
+        }
+        m.appendTail(sb);
+        return sb.toString();
     }
 
     private void requireNotHtml(byte[] content) throws IOException {

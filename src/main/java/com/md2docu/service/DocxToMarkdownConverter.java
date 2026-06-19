@@ -133,6 +133,13 @@ public class DocxToMarkdownConverter {
     private int headingLevel(XWPFDocument doc, XWPFParagraph para) {
         String styleId = para.getStyleID();
         if (styleId == null) return 0;
+
+        // styleId는 로케일과 무관하게 안정적 (e.g. Heading1..Heading6)
+        if (styleId.matches("(?i)Heading[1-6]")) {
+            return styleId.charAt(styleId.length() - 1) - '0';
+        }
+
+        // 한국어 등 비영어 설치에서는 표시 이름이 로컬라이즈됨 (e.g. "제목 1")
         XWPFStyles styles = doc.getStyles();
         if (styles == null) return 0;
         XWPFStyle style = styles.getStyle(styleId);

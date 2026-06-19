@@ -14,18 +14,30 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
-import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+import java.nio.file.Path;
 
 @Service
 @EnableScheduling
 public class ConvertService {
+
+    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(15))
+        .followRedirects(HttpClient.Redirect.NORMAL)
+        .build();
+    private static final long MAX_DOWNLOAD_BYTES = 10L * 1024 * 1024;
 
     private final MarkdownService markdownService;
     private final PdfConverter pdfConverter;
@@ -110,6 +122,100 @@ public class ConvertService {
             result.setContentType("application/zip");
         }
         return storeResult(result);
+    }
+
+    // ── URL 변환 ──────────────────────────────────────────────────────────────
+
+    public ConvertResult convertUrl(String url, String format, ConvertOptions options) throws IOException {
+        validateUrl(url);
+        String rawUrl = resolveRawUrl(url);
+        byte[] content = downloadFromUrl(rawUrl);
+        requireNotHtml(content);
+        String path  = URI.create(rawUrl).getPath();
+        String fname = path.substring(Math.max(path.lastIndexOf('/') + 1, 0));
+        String base  = fname.isEmpty() ? "document" : baseName(fname);
+        if (rawUrl.toLowerCase().endsWith(".zip")) {
+            return convertZip(content, format, options);
+        }
+        return convertMarkdown(new String(content, StandardCharsets.UTF_8), format, options, null, base);
+    }
+
+    private String resolveRawUrl(String url) {
+        // GitHub: .../blob/{ref}/{path} → raw.githubusercontent.com
+        if (url.startsWith("https://github.com/") && url.contains("/blob/")) {
+            return url.replace("https://github.com/", "https://raw.githubusercontent.com/")
+                      .replaceFirst("/blob/", "/");
+        }
+        // GitLab: .../-/blob/{ref}/{path} → .../-/raw/{ref}/{path}
+        if (url.startsWith("https://gitlab.com/") && url.contains("/-/blob/")) {
+            return url.replaceFirst("/-/blob/", "/-/raw/");
+        }
+        return url;
+    }
+
+    private void requireNotHtml(byte[] content) throws IOException {
+        int len = Math.min(content.length, 512);
+        String preview = new String(content, 0, len, StandardCharsets.UTF_8).stripLeading().toLowerCase();
+        if (preview.startsWith("<!doctype") || preview.startsWith("<html")) {
+            throw new IOException(
+                "다운로드한 내용이 HTML 페이지입니다. "
+                + "GitHub/GitLab 파일 링크를 사용하거나 Raw URL을 직접 입력해 주세요.");
+        }
+    }
+
+    private void validateUrl(String url) throws IOException {
+        if (url == null || url.isBlank()) throw new IOException("URL을 입력해 주세요.");
+        String lower = url.toLowerCase();
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+            throw new IOException("http:// 또는 https:// URL만 허용합니다.");
+        }
+        try {
+            String host = URI.create(url).getHost();
+            if (host == null || host.isBlank()) throw new IOException("유효하지 않은 URL입니다.");
+            if (isInternalHost(host.toLowerCase())) {
+                throw new IOException("내부 네트워크 주소는 허용되지 않습니다.");
+            }
+        } catch (IllegalArgumentException e) {
+            throw new IOException("유효하지 않은 URL입니다: " + e.getMessage());
+        }
+    }
+
+    private boolean isInternalHost(String host) {
+        return host.equals("localhost")
+            || host.equals("::1")
+            || host.matches("127\\.\\d+\\.\\d+\\.\\d+")
+            || host.matches("10\\.\\d+\\.\\d+\\.\\d+")
+            || host.matches("192\\.168\\.\\d+\\.\\d+")
+            || host.matches("169\\.254\\.\\d+\\.\\d+")
+            || host.matches("172\\.(1[6-9]|2\\d|3[01])\\.\\d+\\.\\d+");
+    }
+
+    private byte[] downloadFromUrl(String url) throws IOException {
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .timeout(Duration.ofSeconds(15))
+            .GET()
+            .build();
+        try {
+            HttpResponse<InputStream> response = HTTP_CLIENT.send(request,
+                HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IOException("다운로드 실패: HTTP " + response.statusCode());
+            }
+            try (InputStream is = response.body()) {
+                byte[] buf = is.readNBytes((int) MAX_DOWNLOAD_BYTES + 1);
+                if (buf.length > MAX_DOWNLOAD_BYTES) {
+                    throw new IOException("파일 크기가 최대 허용량("
+                        + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + "MB)을 초과했습니다.");
+                }
+                return buf;
+            }
+        } catch (java.net.http.HttpTimeoutException e) {
+            throw new IOException("URL 다운로드 시간이 초과되었습니다 (15초).");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("다운로드가 중단되었습니다.");
+        }
     }
 
     private Map<String, byte[]> buildChapterEntries(DocxToMarkdownConverter.Output output, String base) {

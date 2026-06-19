@@ -105,6 +105,36 @@ public class ConvertController {
     }
 
     /**
+     * URL의 Markdown/ZIP 파일 다운로드 후 변환
+     * POST /api/convert/{format}/url
+     */
+    @PostMapping("/convert/{format}/url")
+    public ResponseEntity<Map<String, Object>> convertUrl(
+            @PathVariable String format,
+            @RequestBody Map<String, Object> body) throws IOException {
+
+        requireValidFormat(format);
+        String url = (String) body.getOrDefault("url", "");
+        ConvertOptions options = new ConvertOptions();
+        if (body.containsKey("pageSize")) {
+            String pageSize = (String) body.get("pageSize");
+            requireValidPageSize(pageSize);
+            options.setPageSize(pageSize);
+        }
+        if (body.containsKey("includeImages"))   options.setIncludeImages((Boolean) body.get("includeImages"));
+        if (body.containsKey("linkStrategy")) {
+            String linkStrategy = (String) body.get("linkStrategy");
+            requireValidLinkStrategy(linkStrategy);
+            options.setLinkStrategy(linkStrategy);
+        }
+        if (body.containsKey("generateToc"))     options.setGenerateToc((Boolean) body.get("generateToc"));
+        if (body.containsKey("numberHeadings"))  options.setNumberHeadings((Boolean) body.get("numberHeadings"));
+
+        ConvertResult result = convertService.convertUrl(url, format, options);
+        return ResponseEntity.ok(toResponseMap(result));
+    }
+
+    /**
      * 변환된 파일 다운로드
      * GET /api/download/{jobId}
      */

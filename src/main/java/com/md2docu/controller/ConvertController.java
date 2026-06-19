@@ -136,6 +136,18 @@ public class ConvertController {
     }
 
     /**
+     * DOCX → Markdown 변환
+     * POST /api/convert/md
+     */
+    @PostMapping("/convert/md")
+    public ResponseEntity<Map<String, Object>> convertToMarkdown(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "splitByChapter", defaultValue = "false") boolean splitByChapter) throws IOException {
+        ConvertResult result = convertService.convertDocxToMd(file, splitByChapter);
+        return ResponseEntity.ok(toResponseMap(result));
+    }
+
+    /**
      * Markdown HTML 미리보기
      * POST /api/preview
      */

@@ -182,7 +182,8 @@ public class DocxToMarkdownConverter {
                 String text = cell.getParagraphs().stream()
                     .map(p -> paragraphText(p, ctx).trim())
                     .filter(t -> !t.isEmpty())
-                    .collect(Collectors.joining(" "));
+                    .collect(Collectors.joining(" "))
+                    .replace("|", "\\|");
                 sb.append(" ").append(text).append(" |");
             }
             sb.append("\n");

@@ -83,7 +83,10 @@ public class ConvertService {
         List<ConvertWarning> warnings = new ArrayList<>();
         DocxToMarkdownConverter.Output output = docxToMarkdownConverter.convert(file.getBytes(), warnings);
 
-        String base = baseName(name);
+        String base = baseName(name).trim()
+                          .replaceAll("[/\\\\:*?\"<>|]", "")
+                          .replaceAll("\\s+", "_");
+        if (base.isEmpty()) base = "document";
         ConvertResult result = new ConvertResult();
         result.setJobId(UUID.randomUUID().toString());
         result.setWarnings(warnings);

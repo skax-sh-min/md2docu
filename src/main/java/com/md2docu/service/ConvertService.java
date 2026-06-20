@@ -133,6 +133,7 @@ public class ConvertService {
     public ConvertResult convertUrl(String url, String format, ConvertOptions options) throws IOException {
         validateUrl(url);
         String rawUrl = resolveRawUrl(url);
+        if (!rawUrl.equals(url)) validateUrl(rawUrl);
         byte[] content = downloadFromUrl(rawUrl);
         requireNotHtml(content);
         String path  = URI.create(rawUrl).getPath();

@@ -134,10 +134,14 @@ public class ConvertService {
         if (!rawUrl.equals(url)) validateUrl(rawUrl);
         byte[] content = downloadFromUrl(rawUrl);
         requireNotHtml(content);
-        String path  = URI.create(rawUrl).getPath();
+        String path      = URI.create(rawUrl).getPath();
+        String lowerPath = path.toLowerCase();
+        if (!lowerPath.endsWith(".md") && !lowerPath.endsWith(".zip")) {
+            throw new IOException("지원하지 않는 파일 형식입니다. .md 또는 .zip URL만 허용합니다.");
+        }
         String fname = path.substring(Math.max(path.lastIndexOf('/') + 1, 0));
         String base  = fname.isEmpty() ? "document" : baseName(fname);
-        if (path.toLowerCase().endsWith(".zip")) {
+        if (lowerPath.endsWith(".zip")) {
             return convertZip(content, format, options);
         }
         String markdown = new String(content, StandardCharsets.UTF_8);
@@ -209,10 +213,30 @@ public class ConvertService {
                         || addr.isMulticastAddress()) {
                     throw new IOException("내부 네트워크 주소는 허용되지 않습니다.");
                 }
+                if (addr instanceof java.net.Inet6Address && isBlockedInet6(addr.getAddress())) {
+                    throw new IOException("내부 네트워크 주소는 허용되지 않습니다.");
+                }
             }
         } catch (IllegalArgumentException e) {
             throw new IOException("유효하지 않은 URL입니다: " + e.getMessage());
         }
+    }
+
+    private boolean isBlockedInet6(byte[] b) {
+        // ULA: fc00::/7 (fd00::/8 포함)
+        if ((b[0] & 0xfe) == 0xfc) return true;
+        // IPv4-mapped(::ffff:x.x.x.x) 및 IPv4-compatible(::x.x.x.x) — 내장 IPv4 주소 재검사
+        boolean tenZero = b[0]==0 && b[1]==0 && b[2]==0 && b[3]==0 &&
+                          b[4]==0 && b[5]==0 && b[6]==0 && b[7]==0 && b[8]==0 && b[9]==0;
+        if (tenZero && ((b[10]==(byte)0xff && b[11]==(byte)0xff) || (b[10]==0 && b[11]==0))) {
+            byte[] v4 = {b[12], b[13], b[14], b[15]};
+            try {
+                InetAddress a = InetAddress.getByAddress(v4);
+                return a.isLoopbackAddress() || a.isSiteLocalAddress()
+                    || a.isLinkLocalAddress() || a.isAnyLocalAddress();
+            } catch (UnknownHostException ignored) {}
+        }
+        return false;
     }
 
     private boolean isInternalHost(String host) {

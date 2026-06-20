@@ -191,7 +191,9 @@ public class ConvertService {
             throw new IOException("http:// 또는 https:// URL만 허용합니다.");
         }
         try {
-            String host = URI.create(url).getHost();
+            URI parsed = URI.create(url);
+            if (parsed.getUserInfo() != null) throw new IOException("URL에 자격 증명(userinfo)을 포함할 수 없습니다.");
+            String host = parsed.getHost();
             if (host == null || host.isBlank()) throw new IOException("유효하지 않은 URL입니다.");
             // IPv6 brackets: [::1] → ::1
             String bareHost = host.startsWith("[") && host.endsWith("]")

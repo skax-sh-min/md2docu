@@ -83,24 +83,54 @@ public class ConvertController {
             @RequestBody Map<String, Object> body) throws IOException {
 
         requireValidFormat(format);
-        String markdown = (String) body.getOrDefault("markdown", "");
+        String markdown = getStringOrDefault(body, "markdown", "");
         ConvertOptions options = new ConvertOptions();
         if (body.containsKey("pageSize")) {
-            String pageSize = (String) body.get("pageSize");
+            String pageSize = requireString(body, "pageSize");
             requireValidPageSize(pageSize);
             options.setPageSize(pageSize);
         }
-        if (body.containsKey("includeImages"))     options.setIncludeImages((Boolean) body.get("includeImages"));
+        if (body.containsKey("includeImages"))     options.setIncludeImages(requireBoolean(body, "includeImages"));
         if (body.containsKey("linkStrategy")) {
-            String linkStrategy = (String) body.get("linkStrategy");
+            String linkStrategy = requireString(body, "linkStrategy");
             requireValidLinkStrategy(linkStrategy);
             options.setLinkStrategy(linkStrategy);
         }
-        if (body.containsKey("generateToc"))       options.setGenerateToc((Boolean) body.get("generateToc"));
-        if (body.containsKey("numberHeadings"))    options.setNumberHeadings((Boolean) body.get("numberHeadings"));
+        if (body.containsKey("generateToc"))       options.setGenerateToc(requireBoolean(body, "generateToc"));
+        if (body.containsKey("numberHeadings"))    options.setNumberHeadings(requireBoolean(body, "numberHeadings"));
 
         ConvertResult result = convertService.convertText(markdown, format, options);
 
+        return ResponseEntity.ok(toResponseMap(result));
+    }
+
+    /**
+     * URL의 Markdown/ZIP 파일 다운로드 후 변환
+     * POST /api/convert/{format}/url
+     */
+    @PostMapping("/convert/{format}/url")
+    public ResponseEntity<Map<String, Object>> convertUrl(
+            @PathVariable String format,
+            @RequestBody Map<String, Object> body) throws IOException {
+
+        requireValidFormat(format);
+        String url = getStringOrDefault(body, "url", "");
+        ConvertOptions options = new ConvertOptions();
+        if (body.containsKey("pageSize")) {
+            String pageSize = requireString(body, "pageSize");
+            requireValidPageSize(pageSize);
+            options.setPageSize(pageSize);
+        }
+        if (body.containsKey("includeImages"))   options.setIncludeImages(requireBoolean(body, "includeImages"));
+        if (body.containsKey("linkStrategy")) {
+            String linkStrategy = requireString(body, "linkStrategy");
+            requireValidLinkStrategy(linkStrategy);
+            options.setLinkStrategy(linkStrategy);
+        }
+        if (body.containsKey("generateToc"))     options.setGenerateToc(requireBoolean(body, "generateToc"));
+        if (body.containsKey("numberHeadings"))  options.setNumberHeadings(requireBoolean(body, "numberHeadings"));
+
+        ConvertResult result = convertService.convertUrl(url, format, options);
         return ResponseEntity.ok(toResponseMap(result));
     }
 
@@ -152,8 +182,8 @@ public class ConvertController {
      * POST /api/preview
      */
     @PostMapping("/preview")
-    public ResponseEntity<Map<String, String>> preview(@RequestBody Map<String, Object> body) {
-        String markdown = (String) body.getOrDefault("markdown", "");
+    public ResponseEntity<Map<String, String>> preview(@RequestBody Map<String, Object> body) throws IOException {
+        String markdown = getStringOrDefault(body, "markdown", "");
         boolean numberHeadings = Boolean.TRUE.equals(body.get("numberHeadings"));
         String html = convertService.preview(markdown, numberHeadings);
         return ResponseEntity.ok(Map.of("html", html));
@@ -173,6 +203,27 @@ public class ConvertController {
     @ExceptionHandler(IOException.class)
     public ResponseEntity<Map<String, String>> handleIoException(IOException e) {
         return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
+
+    private String requireString(Map<String, Object> body, String key) throws IOException {
+        Object val = body.get(key);
+        if (!(val instanceof String)) {
+            throw new IOException("'" + key + "' 필드는 문자열 타입이어야 합니다.");
+        }
+        return (String) val;
+    }
+
+    private String getStringOrDefault(Map<String, Object> body, String key, String defaultValue) throws IOException {
+        if (!body.containsKey(key)) return defaultValue;
+        return requireString(body, key);
+    }
+
+    private boolean requireBoolean(Map<String, Object> body, String key) throws IOException {
+        Object val = body.get(key);
+        if (!(val instanceof Boolean)) {
+            throw new IOException("'" + key + "' 필드는 boolean 타입이어야 합니다.");
+        }
+        return (Boolean) val;
     }
 
     private Map<String, Object> toResponseMap(ConvertResult r) {

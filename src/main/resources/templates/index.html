@@ -85,6 +85,9 @@
     <li class="nav-item">
       <button class="nav-link" data-tab="docx2md">DOCX → MD</button>
     </li>
+    <li class="nav-item">
+      <button class="nav-link" data-tab="url">URL 입력</button>
+    </li>
   </ul>
 
   <!-- 텍스트 입력 탭 -->
@@ -140,6 +143,18 @@ System.out.println("Hello, md2docu!");
       <input type="file" id="file-input" accept=".md,.zip" style="display:none"/>
     </div>
     <div id="file-info" class="d-none alert alert-info py-2 px-3 fw-semibold"></div>
+  </div>
+
+  <!-- URL 입력 탭 -->
+  <div id="tab-url" style="display:none">
+    <div class="mb-3">
+      <label class="form-label fw-semibold">Markdown 파일 URL</label>
+      <input type="url" class="form-control" id="url-input"
+             placeholder="https://github.com/user/repo/blob/main/README.md"/>
+      <div class="form-text">
+        GitHub · GitLab 파일 링크는 자동으로 Raw URL로 변환됩니다. .md 또는 .zip, 최대 10MB.
+      </div>
+    </div>
   </div>
 
   <!-- DOCX → MD 탭 -->
@@ -344,9 +359,10 @@ System.out.println("Hello, md2docu!");
       document.querySelectorAll('[data-tab]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       const tab = btn.dataset.tab;
-      document.getElementById('tab-editor').style.display  = tab === 'editor'   ? '' : 'none';
-      document.getElementById('tab-file').style.display    = tab === 'file'     ? '' : 'none';
-      document.getElementById('tab-docx2md').style.display = tab === 'docx2md'  ? '' : 'none';
+      document.getElementById('tab-editor').style.display  = tab === 'editor'  ? '' : 'none';
+      document.getElementById('tab-file').style.display    = tab === 'file'    ? '' : 'none';
+      document.getElementById('tab-url').style.display     = tab === 'url'     ? '' : 'none';
+      document.getElementById('tab-docx2md').style.display = tab === 'docx2md' ? '' : 'none';
       convertOptions.style.display = tab === 'docx2md' ? 'none' : '';
       document.getElementById('btn-label').textContent = tab === 'docx2md' ? 'Markdown으로 변환' : '변환하기';
     });
@@ -456,7 +472,17 @@ System.out.println("Hello, md2docu!");
     try {
       let data;
 
-      if (activeTab === 'docx2md') {
+      if (activeTab === 'url') {
+        const url = document.getElementById('url-input').value.trim();
+        if (!url) { alert('URL을 입력해 주세요.'); setLoading(false); return; }
+        const res = await fetch(`/api/convert/${format}/url`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, pageSize, linkStrategy: link, includeImages: images, numberHeadings: numbering, generateToc: toc })
+        });
+        data = await res.json();
+        if (!res.ok) throw new Error(data.error || '변환 오류');
+      } else if (activeTab === 'docx2md') {
         if (!selectedDocxFile) { alert('.docx 파일을 선택해 주세요.'); setLoading(false); return; }
         const splitByChapter = document.getElementById('opt-split-chapter').checked;
         const form = new FormData();

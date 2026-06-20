@@ -37,8 +37,9 @@ public class ConvertService {
 
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(15))
-        .followRedirects(HttpClient.Redirect.NORMAL)
+        .followRedirects(HttpClient.Redirect.NEVER)
         .build();
+    private static final int MAX_REDIRECTS = 5;
     private static final long MAX_DOWNLOAD_BYTES = 10L * 1024 * 1024;
 
     private final MarkdownService markdownService;
@@ -216,25 +217,43 @@ public class ConvertService {
     }
 
     private byte[] downloadFromUrl(String url) throws IOException {
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(url))
-            .timeout(Duration.ofSeconds(15))
-            .GET()
-            .build();
+        String currentUrl = url;
         try {
-            HttpResponse<InputStream> response = HTTP_CLIENT.send(request,
-                HttpResponse.BodyHandlers.ofInputStream());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IOException("다운로드 실패: HTTP " + response.statusCode());
-            }
-            try (InputStream is = response.body()) {
-                byte[] buf = is.readNBytes((int) MAX_DOWNLOAD_BYTES + 1);
-                if (buf.length > MAX_DOWNLOAD_BYTES) {
-                    throw new IOException("파일 크기가 최대 허용량("
-                        + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + "MB)을 초과했습니다.");
+            for (int redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
+                HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(currentUrl))
+                    .timeout(Duration.ofSeconds(15))
+                    .GET()
+                    .build();
+                HttpResponse<InputStream> response = HTTP_CLIENT.send(request,
+                    HttpResponse.BodyHandlers.ofInputStream());
+                int status = response.statusCode();
+                if (status == 301 || status == 302 || status == 303
+                        || status == 307 || status == 308) {
+                    String location = response.headers().firstValue("Location")
+                        .orElseThrow(() -> new IOException("리다이렉트 응답에 Location 헤더가 없습니다."));
+                    // relative redirect → absolute
+                    URI resolved = URI.create(currentUrl).resolve(location);
+                    String nextUrl = resolved.toString();
+                    validateUrl(nextUrl);
+                    try (InputStream ignored = response.body()) { /* drain */ }
+                    currentUrl = nextUrl;
+                    continue;
                 }
-                return buf;
+                if (status < 200 || status >= 300) {
+                    try (InputStream ignored = response.body()) { /* drain */ }
+                    throw new IOException("다운로드 실패: HTTP " + status);
+                }
+                try (InputStream is = response.body()) {
+                    byte[] buf = is.readNBytes((int) MAX_DOWNLOAD_BYTES + 1);
+                    if (buf.length > MAX_DOWNLOAD_BYTES) {
+                        throw new IOException("파일 크기가 최대 허용량("
+                            + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + "MB)을 초과했습니다.");
+                    }
+                    return buf;
+                }
             }
+            throw new IOException("리다이렉트 횟수가 최대(" + MAX_REDIRECTS + "회)를 초과했습니다.");
         } catch (java.net.http.HttpTimeoutException e) {
             throw new IOException("URL 다운로드 시간이 초과되었습니다 (15초).");
         } catch (InterruptedException e) {

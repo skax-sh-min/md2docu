@@ -15,7 +15,9 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.InetAddress;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -198,8 +200,26 @@ public class ConvertService {
         try {
             String host = URI.create(url).getHost();
             if (host == null || host.isBlank()) throw new IOException("유효하지 않은 URL입니다.");
-            if (isInternalHost(host.toLowerCase())) {
+            // IPv6 brackets: [::1] → ::1
+            String bareHost = host.startsWith("[") && host.endsWith("]")
+                ? host.substring(1, host.length() - 1) : host;
+            // Fast-fail: obvious internal hostnames/IP patterns before DNS lookup
+            if (isInternalHost(bareHost.toLowerCase())) {
                 throw new IOException("내부 네트워크 주소는 허용되지 않습니다.");
+            }
+            // Resolve DNS and verify every returned address (blocks nip.io-style and IPv6 SSRF)
+            InetAddress[] addresses;
+            try {
+                addresses = InetAddress.getAllByName(bareHost);
+            } catch (UnknownHostException e) {
+                throw new IOException("호스트를 찾을 수 없습니다: " + bareHost);
+            }
+            for (InetAddress addr : addresses) {
+                if (addr.isLoopbackAddress() || addr.isSiteLocalAddress()
+                        || addr.isLinkLocalAddress() || addr.isAnyLocalAddress()
+                        || addr.isMulticastAddress()) {
+                    throw new IOException("내부 네트워크 주소는 허용되지 않습니다.");
+                }
             }
         } catch (IllegalArgumentException e) {
             throw new IOException("유효하지 않은 URL입니다: " + e.getMessage());

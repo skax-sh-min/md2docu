@@ -341,11 +341,12 @@ class PdfConverterTest {
         }
     }
 
-    @Test
-    void createsATocDestinationAtTheActualHeading() throws IOException {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void createsATocDestinationAtTheActualHeading(boolean hasH1) throws IOException {
         options.setGenerateToc(true);
         options.setNumberHeadings(true);
-        String markdown = "# Document\n\n" + "Filler paragraph.\n\n".repeat(45)
+        String markdown = (hasH1 ? "# Document\n\n" : "") + "Filler paragraph.\n\n".repeat(45)
             + "## Destination\n\nChapter body.";
         String html = new MarkdownService().toHtml(markdown, true, true);
 

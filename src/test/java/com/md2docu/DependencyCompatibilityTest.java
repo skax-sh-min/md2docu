@@ -12,11 +12,13 @@ import org.apache.poi.util.Units;
 import org.apache.poi.xwpf.usermodel.Document;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFRelation;
+import org.jsoup.Jsoup;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -101,6 +103,93 @@ class DependencyCompatibilityTest {
                 .content(mapper.writeValueAsBytes(Map.of("markdown", "# Hello\n\n**world**"))))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.html", containsString("<strong>world</strong>")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void previewsFormattedHeadingsWithIndependentNumbering(boolean numbers) throws Exception {
+        MvcResult result = mvc.perform(post("/api/preview")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsBytes(Map.of(
+                    "markdown", "**Chapter** `code`\n------------------\n\n#### Jump",
+                    "numberHeadings", numbers
+                ))))
+            .andExpect(status().isOk())
+            .andReturn();
+        var html = Jsoup.parseBodyFragment(
+            mapper.readTree(result.getResponse().getContentAsByteArray()).path("html").asText());
+        assertThat(html.select(".toc")).isEmpty();
+        assertThat(html.selectFirst("h2").text()).isEqualTo((numbers ? "1. " : "") + "Chapter code");
+        assertThat(html.selectFirst("h2 strong").text()).isEqualTo("Chapter");
+        assertThat(html.selectFirst("h2 code").text()).isEqualTo("code");
+        assertThat(html.selectFirst("h4").text()).isEqualTo((numbers ? "1.1.1. " : "") + "Jump");
+    }
+
+    @ParameterizedTest
+    @MethodSource("headingOptions")
+    void convertsFormattedHeadingsWithMatchingTocTargets(
+            String format, boolean hasH1, boolean toc, boolean numbers) throws Exception {
+        String markdown = (hasH1 ? "# Document\n\n" : "")
+            + "**Bold** and `code`\n------------------\n\nBody.\n\n### Child";
+        ConversionResponse response = response(mvc.perform(post("/api/convert/" + format + "/text")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsBytes(Map.of(
+                    "markdown", markdown, "generateToc", toc, "numberHeadings", numbers
+                ))))
+            .andExpect(status().isOk())
+            .andReturn());
+        assertThat(response.warnings()).isEmpty();
+        String first = (numbers ? "1. " : "") + "Bold and code";
+        String child = (numbers ? "1.1. " : "") + "Child";
+        if ("pdf".equals(format)) {
+            try (var pdf = Loader.loadPDF(download(response, MediaType.APPLICATION_PDF_VALUE))) {
+                PDFTextStripper stripper = new PDFTextStripper();
+                stripper.setSortByPosition(true);
+                List<String> lines = stripper.getText(pdf).lines()
+                    .map(line -> line.replace('\u00a0', ' ').strip()).toList();
+                assertThat(lines.stream().filter(first::equals).count())
+                    .as("heading and TOC label in %s", lines).isEqualTo(toc ? 2 : 1);
+                assertThat(lines.stream().filter(child::equals).count())
+                    .as("child heading and TOC label in %s", lines).isEqualTo(toc ? 2 : 1);
+                List<PDActionGoTo> destinations = new ArrayList<>();
+                for (var page : pdf.getPages()) {
+                    for (var annotation : page.getAnnotations()) {
+                        if (annotation instanceof PDAnnotationLink link
+                                && link.getAction() instanceof PDActionGoTo goTo) {
+                            assertThat(goTo.getDestination()).isNotNull();
+                            destinations.add(goTo);
+                        }
+                    }
+                }
+                assertThat(destinations).hasSize(toc ? 2 : 0);
+            }
+        } else {
+            try (XWPFDocument doc = new XWPFDocument(
+                    new ByteArrayInputStream(download(response, DOCX_CONTENT_TYPE)))) {
+                List<String> paragraphs = doc.getParagraphs().stream().map(p -> p.getText()).toList();
+                assertThat(paragraphs).contains(first, child);
+                assertThat(String.join("\n", paragraphs)).doesNotContain("**Bold**", "`code`");
+                var links = doc.getParagraphs().stream()
+                    .flatMap(p -> p.getCTP().getHyperlinkList().stream()).toList();
+                assertThat(links).hasSize(toc ? 2 : 0);
+                if (toc) {
+                    var headings = doc.getParagraphs().stream()
+                        .filter(p -> !p.getCTP().getBookmarkStartList().isEmpty()).toList();
+                    assertThat(headings).extracting(p -> p.getText()).containsExactly(first, child);
+                    var bookmarks = headings.stream()
+                        .flatMap(p -> p.getCTP().getBookmarkStartList().stream()).toList();
+                    assertThat(links).extracting(link -> link.getAnchor())
+                        .containsExactlyElementsOf(bookmarks.stream().map(b -> b.getName()).toList())
+                        .doesNotHaveDuplicates();
+                }
+            }
+        }
+    }
+
+    private static Stream<Arguments> headingOptions() {
+        return Stream.of("pdf", "docx").flatMap(format ->
+            Stream.of(false, true).flatMap(h1 -> Stream.of(false, true).flatMap(toc ->
+                Stream.of(false, true).map(numbers -> Arguments.of(format, h1, toc, numbers)))));
     }
 
     @Test

@@ -12,8 +12,6 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Node;
 import org.jsoup.nodes.TextNode;
-import org.apache.xmlbeans.XmlCursor;
-import org.apache.xmlbeans.XmlObject;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
 import org.springframework.stereotype.Service;
 
@@ -23,14 +21,10 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.util.List;
-import java.util.logging.Logger;
-import java.util.stream.Collectors;
 import javax.imageio.ImageIO;
 
 @Service
 public class DocxConverter {
-
-    private static final Logger log = Logger.getLogger(DocxConverter.class.getName());
 
     private final ImageResolver imageResolver;
     private final UserSettingsService settingsService;
@@ -48,17 +42,17 @@ public class DocxConverter {
     }
 
     public byte[] convert(String html, ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) throws IOException {
-        XWPFDocument doc = new XWPFDocument();
-        setupDefaultStyles(doc, options);
+        try (XWPFDocument doc = new XWPFDocument()) {
+            setupDefaultStyles(doc, options);
 
-        int[] bkId = {0};
-        Document jsoupDoc = Jsoup.parse(html);
-        processBlockNodes(doc, jsoupDoc.body().childNodes(), options, imagePaths, warnings, bkId);
+            int[] bkId = {0};
+            Document jsoupDoc = Jsoup.parse(html);
+            processBlockNodes(doc, jsoupDoc.body().childNodes(), options, imagePaths, warnings, bkId);
 
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        doc.write(out);
-        doc.close();
-        return out.toByteArray();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            doc.write(out);
+            return out.toByteArray();
+        }
     }
 
     // ── 블록 요소 처리 ────────────────────────────────────────────────────────
@@ -83,12 +77,12 @@ public class DocxConverter {
                                      ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings,
                                      int[] bkId) {
         switch (el.tagName()) {
-            case "h1" -> addHeading(doc, el, 1, bkId);
-            case "h2" -> addHeading(doc, el, 2, bkId);
-            case "h3" -> addHeading(doc, el, 3, bkId);
-            case "h4" -> addHeading(doc, el, 4, bkId);
-            case "h5" -> addHeading(doc, el, 5, bkId);
-            case "h6" -> addHeading(doc, el, 6, bkId);
+            case "h1" -> addHeading(doc, el, 1, options, imagePaths, warnings, bkId);
+            case "h2" -> addHeading(doc, el, 2, options, imagePaths, warnings, bkId);
+            case "h3" -> addHeading(doc, el, 3, options, imagePaths, warnings, bkId);
+            case "h4" -> addHeading(doc, el, 4, options, imagePaths, warnings, bkId);
+            case "h5" -> addHeading(doc, el, 5, options, imagePaths, warnings, bkId);
+            case "h6" -> addHeading(doc, el, 6, options, imagePaths, warnings, bkId);
             case "p"  -> {
                 XWPFParagraph p = doc.createParagraph();
                 p.setSpacingBetween(1.2);
@@ -157,20 +151,24 @@ public class DocxConverter {
     }
 
     private void applyRun(XWPFParagraph para, String text, RunState state) {
-        UserSettings s = settingsService.get();
         XWPFRun run = para.createRun();
-        run.setBold(state.bold);
+        configureRun(run, state);
+        run.setText(text);
+    }
+
+    private void configureRun(XWPFRun run, RunState state) {
+        UserSettings s = settingsService.get();
+        if (state.headingSize == null || state.bold) run.setBold(state.bold);
         run.setItalic(state.italic);
         if (state.strike) run.setStrikeThrough(true);
         if (state.code) {
             run.setFontFamily("Courier New");
-            run.setFontSize(s.getCodeFontSizePt());
+            run.setFontSize(state.headingSize != null ? state.headingSize : s.getCodeFontSizePt());
         } else {
             run.setFontFamily(primaryFont(s.getBodyFontFamily()));
-            run.setFontSize(s.getBodyFontSizePt());
+            run.setFontSize(state.headingSize != null ? state.headingSize : s.getBodyFontSizePt());
         }
         if (state.color != null) run.setColor(state.color);
-        run.setText(text);
     }
 
     private static String primaryFont(String fontFamily) {
@@ -194,52 +192,28 @@ public class DocxConverter {
 
     // ── 제목 ──────────────────────────────────────────────────────────────────
 
-    private void addHeading(XWPFDocument doc, Element el, int level, int[] bkId) {
+    private void addHeading(XWPFDocument doc, Element el, int level, ConvertOptions options,
+                            LocalImagePaths imagePaths, List<ConvertWarning> warnings, int[] bkId) {
         XWPFParagraph p = doc.createParagraph();
+        p.setStyle("Heading" + level);
         p.setSpacingBefore(Twips.SPACE_H_BEFORE);
         p.setSpacingAfter(Twips.SPACE_H_AFTER);
         p.setSpacingBetween(1.2);
 
         UserSettings s = settingsService.get();
         int size = headingSize(level, s);
-        String font = primaryFont(s.getBodyFontFamily());
-        String text = el.text();
-
         String id = el.attr("id");
+        int bid = bkId[0]++;
         if (!id.isEmpty()) {
-            int bid = bkId[0]++;
-            String safeId = id.replace("&", "&amp;").replace("\"", "&quot;")
-                              .replace("<", "&lt;").replace(">", "&gt;");
-            insertWmlElement(p, String.format(
-                "<w:bookmarkStart xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"" +
-                " w:id=\"%d\" w:name=\"%s\"/>", bid, safeId));
-            XWPFRun run = p.createRun();
-            run.setBold(true);
-            run.setFontFamily(font);
-            run.setFontSize(size);
-            run.setText(text);
-            insertWmlElement(p, String.format(
-                "<w:bookmarkEnd xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"" +
-                " w:id=\"%d\"/>", bid));
-        } else {
-            XWPFRun run = p.createRun();
-            run.setBold(true);
-            run.setFontFamily(font);
-            run.setFontSize(size);
-            run.setText(text);
+            CTBookmark bookmark = p.getCTP().addNewBookmarkStart();
+            bookmark.setId(BigInteger.valueOf(bid));
+            bookmark.setName(id);
         }
-    }
-
-    private void insertWmlElement(XWPFParagraph p, String xmlFragment) {
-        try {
-            XmlObject obj = XmlObject.Factory.parse(xmlFragment);
-            try (XmlCursor src = obj.newCursor(); XmlCursor dst = p.getCTP().newCursor()) {
-                src.toFirstContentToken();
-                dst.toEndToken();
-                src.moveXml(dst);
-            }
-        } catch (Exception e) {
-            log.warning("WML 요소 삽입 실패: " + e.getMessage());
+        RunState state = new RunState();
+        state.headingSize = size;
+        processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, state);
+        if (!id.isEmpty()) {
+            p.getCTP().addNewBookmarkEnd().setId(BigInteger.valueOf(bid));
         }
     }
 
@@ -267,26 +241,60 @@ public class DocxConverter {
 
     private void addList(XWPFDocument doc, Element listEl, boolean ordered, int depth,
                          ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
-        int index = 1;
+        if (depth > 9) throw new IllegalArgumentException("DOCX lists support at most 9 levels");
+        BigInteger start = ordered && listEl.hasAttr("start")
+            ? new BigInteger(listEl.attr("start")) : BigInteger.ONE;
+        BigInteger numId = createListNumbering(doc, ordered, depth, start);
         for (Element li : listEl.select("> li")) {
-            XWPFParagraph p = doc.createParagraph();
-            p.setIndentationLeft(Twips.INDENT_BLOCK * depth);
-            p.setSpacingBetween(1.2);
-            p.setSpacingAfter(Twips.SPACE_LIST_AFTER);
-
-            String prefix = ordered ? (index++) + ". " : "• ";
-            p.createRun().setText(prefix);
-
-            List<Node> inlineNodes = li.childNodes().stream()
-                .filter(n -> !(n instanceof Element e &&
-                               (e.tagName().equals("ul") || e.tagName().equals("ol"))))
-                .collect(Collectors.toList());
-            processInlineNodes(doc, p, inlineNodes, options, imagePaths, warnings, new RunState());
-
-            for (Element nested : li.select("> ul, > ol")) {
-                addList(doc, nested, nested.tagName().equals("ol"), depth + 1, options, imagePaths, warnings);
+            XWPFParagraph p = listParagraph(doc, depth, numId);
+            for (Node child : li.childNodes()) {
+                if (child instanceof Element e && (e.tagName().equals("ul") || e.tagName().equals("ol"))) {
+                    addList(doc, e, e.tagName().equals("ol"), depth + 1, options, imagePaths, warnings);
+                    p = null;
+                } else if (child instanceof Element e && e.tagName().equals("p")) {
+                    if (p == null || !p.getRuns().isEmpty()) p = listParagraph(doc, depth, null);
+                    processInlineNodes(doc, p, e.childNodes(), options, imagePaths, warnings, new RunState());
+                    p = null;
+                } else {
+                    if (child instanceof TextNode text && text.isBlank()
+                            && (p == null || p.getRuns().isEmpty())) continue;
+                    if (p == null) p = listParagraph(doc, depth, null);
+                    processInlineNodes(doc, p, List.of(child), options, imagePaths, warnings, new RunState());
+                }
             }
         }
+    }
+
+    private XWPFParagraph listParagraph(XWPFDocument doc, int depth, BigInteger numId) {
+        XWPFParagraph p = doc.createParagraph();
+        p.setStyle("ListParagraph");
+        p.setIndentationLeft(Twips.INDENT_BLOCK * depth);
+        p.setSpacingBetween(1.2);
+        p.setSpacingAfter(Twips.SPACE_LIST_AFTER);
+        if (numId != null) {
+            p.setNumID(numId);
+            p.setNumILvl(BigInteger.valueOf(depth - 1));
+            p.setIndentationHanging(Twips.INDENT_BLOCK / 2);
+        }
+        return p;
+    }
+
+    private BigInteger createListNumbering(XWPFDocument doc, boolean ordered, int depth, BigInteger start) {
+        XWPFNumbering numbering = doc.getNumbering() != null ? doc.getNumbering() : doc.createNumbering();
+        CTAbstractNum definition = CTAbstractNum.Factory.newInstance();
+        definition.setAbstractNumId(BigInteger.valueOf(numbering.getAbstractNums().size()));
+        definition.addNewMultiLevelType().setVal(STMultiLevelType.MULTILEVEL);
+        for (int level = 0; level < 9; level++) {
+            CTLvl lvl = definition.addNewLvl();
+            lvl.setIlvl(BigInteger.valueOf(level));
+            lvl.addNewStart().setVal(level == depth - 1 ? start : BigInteger.ONE);
+            lvl.addNewNumFmt().setVal(ordered ? STNumberFormat.DECIMAL : STNumberFormat.BULLET);
+            lvl.addNewLvlText().setVal(ordered ? "%" + (level + 1) + "." : "•");
+            CTInd indent = lvl.addNewPPr().addNewInd();
+            indent.setLeft(BigInteger.valueOf(Twips.INDENT_BLOCK * (level + 1)));
+            indent.setHanging(BigInteger.valueOf(Twips.INDENT_BLOCK / 2));
+        }
+        return numbering.addNum(numbering.addAbstractNum(new XWPFAbstractNum(definition)));
     }
 
     // ── 인용문 ────────────────────────────────────────────────────────────────
@@ -437,13 +445,9 @@ public class DocxConverter {
                 link.setId(rId);
 
                 CTR ctr = link.addNewR();
-                CTRPr rpr = ctr.addNewRPr();
-                CTColor color = rpr.addNewColor();
-                color.setVal("0563C1");
-                CTUnderline underline = rpr.addNewU();
-                underline.setVal(STUnderline.SINGLE);
-                if (state.bold) rpr.addNewB();
-                if (state.italic) rpr.addNewI();
+                XWPFHyperlinkRun run = new XWPFHyperlinkRun(link, ctr, para);
+                configureRun(run, state.withColor("0563C1"));
+                run.setUnderline(UnderlinePatterns.SINGLE);
 
                 CTText t = ctr.addNewT();
                 t.setStringValue(text);
@@ -455,12 +459,9 @@ public class DocxConverter {
                 CTHyperlink link = para.getCTP().addNewHyperlink();
                 link.setAnchor(href.substring(1));
                 CTR ctr = link.addNewR();
-                CTRPr rpr = ctr.addNewRPr();
-                CTColor color = rpr.addNewColor();
-                color.setVal("0563C1");
-                rpr.addNewU().setVal(STUnderline.SINGLE);
-                if (state.bold) rpr.addNewB();
-                if (state.italic) rpr.addNewI();
+                XWPFHyperlinkRun run = new XWPFHyperlinkRun(link, ctr, para);
+                configureRun(run, state.withColor("0563C1"));
+                run.setUnderline(UnderlinePatterns.SINGLE);
                 ctr.addNewT().setStringValue(text);
             } catch (Exception e) {
                 applyRun(para, text, state.withColor("0563C1"));
@@ -479,6 +480,43 @@ public class DocxConverter {
     // ── 기본 스타일 ──────────────────────────────────────────────────────────
 
     private void setupDefaultStyles(XWPFDocument doc, ConvertOptions options) {
+        XWPFStyles styles = doc.createStyles();
+        CTStyle normal = CTStyle.Factory.newInstance();
+        normal.setStyleId("Normal");
+        normal.setType(STStyleType.PARAGRAPH);
+        normal.setDefault(true);
+        normal.addNewName().setVal("Normal");
+        styles.addStyle(new XWPFStyle(normal));
+        CTStyle list = CTStyle.Factory.newInstance();
+        list.setStyleId("ListParagraph");
+        list.setType(STStyleType.PARAGRAPH);
+        list.addNewName().setVal("List Paragraph");
+        list.addNewBasedOn().setVal("Normal");
+        styles.addStyle(new XWPFStyle(list));
+        UserSettings settings = settingsService.get();
+        for (int level = 1; level <= 6; level++) {
+            CTStyle heading = CTStyle.Factory.newInstance();
+            heading.setStyleId("Heading" + level);
+            heading.setType(STStyleType.PARAGRAPH);
+            heading.addNewName().setVal("heading " + level);
+            heading.addNewBasedOn().setVal("Normal");
+            heading.addNewNext().setVal("Normal");
+            heading.addNewQFormat();
+            heading.addNewUiPriority().setVal(BigInteger.valueOf(level));
+            CTPPrGeneral properties = heading.addNewPPr();
+            properties.addNewOutlineLvl().setVal(BigInteger.valueOf(level - 1));
+            properties.addNewKeepNext();
+            CTRPr run = heading.addNewRPr();
+            run.addNewB();
+            run.addNewSz().setVal(BigInteger.valueOf(headingSize(level, settings) * 2L));
+            run.addNewSzCs().setVal(BigInteger.valueOf(headingSize(level, settings) * 2L));
+            CTFonts fonts = run.addNewRFonts();
+            String font = primaryFont(settings.getBodyFontFamily());
+            fonts.setAscii(font);
+            fonts.setHAnsi(font);
+            fonts.setEastAsia(font);
+            styles.addStyle(new XWPFStyle(heading));
+        }
         CTDocument1 docBody = doc.getDocument();
         CTBody body = docBody.getBody();
         if (body.isSetSectPr()) return;
@@ -526,6 +564,7 @@ public class DocxConverter {
     private static class RunState {
         boolean bold, italic, strike, code;
         String color;
+        Integer headingSize;
 
         RunState withBold(boolean v)   { RunState s = copy(); s.bold = v; return s; }
         RunState withItalic(boolean v) { RunState s = copy(); s.italic = v; return s; }
@@ -537,6 +576,7 @@ public class DocxConverter {
             RunState s = new RunState();
             s.bold = bold; s.italic = italic; s.strike = strike;
             s.code = code; s.color = color;
+            s.headingSize = headingSize;
             return s;
         }
     }

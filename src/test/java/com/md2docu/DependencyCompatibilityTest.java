@@ -521,6 +521,24 @@ class DependencyCompatibilityTest {
     }
 
     @Test
+    void splitsGeneratedDocxUsingItsSemanticHeadingsAndPreservesLists() throws Exception {
+        ConversionResponse generated = convertText("docx",
+            "# Title\n\n## First\n\n7. Parent\n   - Child\n\n## Second\n\nSecond body");
+        byte[] bytes = download(generated, DOCX_CONTENT_TYPE);
+        MockMultipartFile file = new MockMultipartFile("file", "generated.docx", DOCX_CONTENT_TYPE, bytes);
+        ConversionResponse response = response(mvc.perform(multipart("/api/convert/md")
+                .file(file).param("splitByChapter", "true"))
+            .andExpect(status().isOk()).andReturn());
+        assertThat(response.warnings()).isEmpty();
+        Map<String, byte[]> entries = unzip(download(response, "application/zip"));
+        assertThat(entries).containsOnlyKeys("00_generated.md", "01_First.md", "02_Second.md");
+        String chapter = new String(entries.get("01_First.md"), StandardCharsets.UTF_8);
+        assertThat(chapter).contains("## First", "7. Parent", "- Child").doesNotContain("Second body");
+        var html = Jsoup.parseBodyFragment(new com.md2docu.service.MarkdownService().toHtml(chapter, false, false));
+        assertThat(html.select("ol > li > ul > li").eachText()).containsExactly("Child");
+    }
+
+    @Test
     void preservesSettingsJsonPropertyNames() throws Exception {
         mvc.perform(get("/api/settings"))
             .andExpect(status().isOk())

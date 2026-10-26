@@ -70,7 +70,16 @@ JAR 이름의 버전은 [pom.xml](pom.xml)의 프로젝트 버전을 따릅니�
 - 단계를 건너뛰면 실제 제목 계층은 유지하고 빠진 상위 번호를 `1`로 보정합니다. 예를 들어 H3부터 시작하면 `1.1.`, H2의 첫 하위 제목이 H4이면 `1.1.1.`이 됩니다.
 - HTML/PDF 제목의 강조·코드·링크 등 인라인 서식은 유지하고, 목차에는 이스케이프한 일반 텍스트를 사용합니다. 생성 ID는 기존 HTML ID와 겹치지 않도록 부여합니다.
 - 코드 블록, 인용문·목록 내부의 제목, 직접 작성한 HTML 제목은 목차·번호 대상으로 다시 가공하지 않습니다.
-- 미리보기는 번호 옵션만 반영하며 목차는 표시하지 않습니다. DOCX 제목의 개별 인라인 서식과 Word 의미 구조에는 아래의 알려진 제한이 남아 있습니다.
+- 미리보기는 번호 옵션만 반영하며 목차는 표시하지 않습니다.
+
+### DOCX 제목·목록 구조
+
+- H1~H6은 `Heading1`~`Heading6` 스타일과 탐색용 outline level을 갖습니다. 설정한 제목 크기와 글꼴을 사용하며 강조·기울임·취소선·인라인 코드·외부 링크를 개별 Run으로 보존합니다.
+- 순서/비순서 목록은 표시용 문자를 본문에 붙이지 않고 실제 Word numbering을 사용합니다. 혼합 중첩, 순서 목록의 시작 번호, 별개 목록의 재시작과 부모 목록의 이어짐을 보존합니다.
+- DOCX 형식에 맞춰 목록은 최대 9단계까지 지원하며, 더 깊은 입력은 구조를 평탄화하지 않고 변환을 거부합니다.
+- 역변환은 첫 항목의 시작 번호를 기록하고 이어지는 항목은 `1.` 마커로 정규화합니다. 중첩 들여쓰기는 해당 Markdown 마커의 폭에 맞춥니다. 인접한 별개 목록은 보이지 않는 `<!-- list break -->` 주석으로 구분합니다.
+- Word 시작 번호가 Markdown의 범위인 `0`~`999999999` 밖이면 `1`로 대체하고 `UNSUPPORTED_LIST_START`를 반환합니다. 번호 정의 누락은 `LIST_NUMBERING_UNRESOLVED`, 십진수·글머리표 외 번호 형식의 십진수 대체는 `UNSUPPORTED_LIST_FORMAT`으로 알립니다.
+- 생성한 DOCX도 H2를 기준으로 Markdown 챕터 ZIP을 만들 수 있습니다. Run 내부 요소·이스케이프·링크 내부 콘텐츠 등의 역변환 제한은 아직 남아 있습니다.
 
 ### ZIP 파일 구성
 
@@ -303,6 +312,7 @@ java -jar .\target\md2docu-0.1.4-SNAPSHOT.jar `
 - Spring Boot가 관리하는 전이 의존성과 Maven 플러그인은 기본적으로 Boot BOM·부모 POM을 따릅니다.
 - Log4j는 POI 6이 선언한 버전보다 낮아지지 않도록 `log4j2.version`으로 맞췄습니다.
 - PDF 모듈 두 개는 `openhtmltopdf.version` 하나로 버전을 맞춥니다.
+- POI 모듈은 `poi.version`으로 맞추고, 다단계 번호 정의에 필요한 전체 스키마인 `poi-ooxml-full`을 사용합니다. 중복 스키마를 피하기 위해 `poi-ooxml-lite`는 제외합니다.
 - flexmark의 구형 PDF 변환 모듈 제외와 Xalan/Serializer 명시 버전은 유지합니다.
 - Jackson 3는 `tools.jackson` 패키지를 사용하지만 `jackson-annotations`는 공식 정책에 따라 2.x의 `com.fasterxml.jackson.annotation`을 사용합니다.
 - Spring Boot 4에 맞춰 `spring-boot-starter-webmvc`와 `spring-boot-starter-webmvc-test`로 전환했습니다.
@@ -328,6 +338,9 @@ mvn "-Dtest=PdfConverterTest" test
 # 목차·제목 번호·인라인 서식 회귀 테스트
 mvn "-Dtest=MarkdownServiceTest" test
 
+# DOCX 의미 구조와 왕복 변환 회귀 테스트
+mvn "-Dtest=DocxStructureTest" test
+
 # ZIP 이미지 경로와 API 호환성 테스트
 mvn "-Dtest=ImageResolverTest,DependencyCompatibilityTest" test
 
@@ -335,7 +348,7 @@ mvn "-Dtest=ImageResolverTest,DependencyCompatibilityTest" test
 mvn dependency:list
 ```
 
-2026-10-26 기준 **181개 테스트 통과**: 호환성 75개, Markdown 32개, PDF 회귀 49개, 설정 9개, 이미지 경로 16개.
+2026-10-26 기준 **209개 테스트 통과**: 호환성 76개, DOCX 구조 27개, Markdown 32개, PDF 회귀 49개, 설정 9개, 이미지 경로 16개.
 
 - Spring Boot 4 애플리케이션 컨텍스트, MVC·Thymeleaf·JSON 응답
 - H1 유무·목차/번호 옵션 조합, Setext·단계 생략·중복 ID, 인라인 서식·엔티티·코드 블록 보존
@@ -347,6 +360,8 @@ mvn dependency:list
 - 루트·중첩 ZIP의 PDF/DOCX 이미지 바이트·픽셀, 문서 상대·루트·상위 경로, 인코딩된 파일명과 경계 차단
 - 이미지 없음·누락·잘못된 경로·변환 오류·MD 없음의 임시 디렉터리 정리
 - DOCX 생성·다운로드, 표·하이퍼링크·ZIP 이미지 임베드
+- DOCX H1~H6 스타일·outline·북마크·인라인 서식과 제목 크기, 최대 9단계 혼합 목록, 시작 번호·재시작·중첩·문단 경계의 왕복 변환
+- 생성 DOCX의 H2 기반 챕터 분리, Word 번호 시작값 override, 번호 정의 누락·Markdown 범위 밖 시작값 경고
 - DOCX → Markdown, 이미지 추출 ZIP, 챕터 분리
 - Jackson 3 설정 저장·로드·초기화·기존 JSON 속성 호환
 - 잘못된 입력과 설정 읽기·쓰기 실패의 오류 응답
@@ -357,7 +372,6 @@ mvn dependency:list
 
 다음 개선 과제가 남아 있습니다.
 
-- 생성 DOCX 제목의 개별 인라인 서식·링크 구조는 평탄화되며, 제목·목록의 Word 의미 구조가 부족해 왕복 변환 시 구조를 잃을 수 있습니다.
 - DOCX 역변환의 혼합 Run·줄바꿈·탭·특수문자, 링크 내부 이미지 보존에 제한이 있습니다.
 - 이미지 타입 추정과 일부 실패 경고, 설정의 형식별 반영, API 옵션 처리에 차이가 있습니다.
 - 미리보기는 최종 출력과 같지 않으며 응답 순서 역전 및 오류 표시 개선이 필요합니다.

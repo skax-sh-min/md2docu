@@ -22,6 +22,7 @@ https://github.com/spring-projects/spring-boot
 
 ----
 Apache POI 6.0.0
+Includes poi-ooxml and poi-ooxml-full (complete OOXML schemas).
 Copyright 2001-2024 The Apache Software Foundation
 https://poi.apache.org/
 

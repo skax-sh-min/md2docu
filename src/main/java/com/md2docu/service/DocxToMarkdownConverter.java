@@ -19,17 +19,29 @@ public class DocxToMarkdownConverter {
     private record ConvertContext(
         List<ConvertWarning> warnings,
         Map<String, byte[]> images,
-        IdentityHashMap<XWPFPictureData, String> picNames
+        IdentityHashMap<XWPFPictureData, String> picNames,
+        ListState lists
     ) {}
 
+    private record NumberKey(BigInteger numId, int level) {}
+    private record ListDefinition(boolean ordered, BigInteger start, int restartLevel) {}
+    private record ListLevel(BigInteger numId, int level, int contentIndent, int wordIndent) {}
+    private static class ListState {
+        final Map<NumberKey, BigInteger> counters = new HashMap<>();
+        final Map<NumberKey, Integer> restartLevels = new HashMap<>();
+        final TreeMap<Integer, ListLevel> active = new TreeMap<>();
+    }
+
     public Output convert(byte[] docxBytes, List<ConvertWarning> warnings) throws IOException {
-        ConvertContext ctx = new ConvertContext(warnings, new LinkedHashMap<>(), new IdentityHashMap<>());
+        ConvertContext ctx = new ConvertContext(warnings, new LinkedHashMap<>(), new IdentityHashMap<>(),
+            new ListState());
         try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(docxBytes))) {
             StringBuilder sb = new StringBuilder();
             for (IBodyElement el : doc.getBodyElements()) {
                 if (el instanceof XWPFParagraph para) {
                     appendParagraph(doc, para, sb, ctx);
                 } else if (el instanceof XWPFTable table) {
+                    endList(sb, ctx);
                     appendTable(table, sb, ctx);
                 }
             }
@@ -43,6 +55,7 @@ public class DocxToMarkdownConverter {
         String text = paragraphText(para, ctx);
 
         if (heading > 0) {
+            endList(sb, ctx);
             if (!text.isBlank()) {
                 sb.append("#".repeat(heading)).append(" ").append(text.trim()).append("\n\n");
             }
@@ -50,18 +63,69 @@ public class DocxToMarkdownConverter {
         }
 
         if (para.getNumID() != null) {
-            int ilvl = para.getNumIlvl() != null ? para.getNumIlvl().intValue() : 0;
-            String indent = "  ".repeat(ilvl);
-            String marker = isOrderedList(doc, para) ? "1." : "-";
-            sb.append(indent).append(marker).append(" ").append(text).append("\n");
+            appendListParagraph(doc, para, text, sb, ctx);
             return;
         }
 
-        if (!text.isBlank()) {
-            sb.append(text).append("\n\n");
-        } else {
-            sb.append("\n");
+        if ("ListParagraph".equals(para.getStyleID()) && !text.isBlank()) {
+            ListLevel level = ctx.lists().active.descendingMap().values().stream()
+                .filter(item -> item.wordIndent() == para.getIndentationLeft()).findFirst().orElse(null);
+            if (level != null) {
+                ctx.lists().active.tailMap(level.level() + 1).clear();
+                String indent = " ".repeat(level.contentIndent());
+                sb.append("\n").append(indent).append(text.replace("\n", "\n" + indent)).append("\n\n");
+                return;
+            }
         }
+        if (text.isBlank()) {
+            sb.append("\n");
+            return;
+        }
+        endList(sb, ctx);
+        sb.append(text).append("\n\n");
+    }
+
+    private void endList(StringBuilder sb, ConvertContext ctx) {
+        if (!ctx.lists().active.isEmpty()) sb.append("\n");
+        ctx.lists().active.clear();
+    }
+
+    private void appendListParagraph(XWPFDocument doc, XWPFParagraph para, String text,
+                                     StringBuilder sb, ConvertContext ctx) {
+        int depth = para.getNumIlvl() != null ? para.getNumIlvl().intValue() : 0;
+        ListDefinition definition = listDefinition(doc, para, depth, ctx);
+        if (definition == null) {
+            endList(sb, ctx);
+            sb.append(text).append("\n\n");
+            return;
+        }
+        ListState lists = ctx.lists();
+        NumberKey key = new NumberKey(para.getNumID(), depth);
+        BigInteger value = lists.counters.getOrDefault(key, definition.start().subtract(BigInteger.ONE))
+            .add(BigInteger.ONE);
+        lists.counters.put(key, value);
+        lists.restartLevels.put(key, definition.restartLevel());
+        lists.counters.keySet().removeIf(k -> k.numId().equals(key.numId()) && k.level() > depth
+            && lists.restartLevels.get(k) >= depth);
+        ListLevel previous = lists.active.get(depth);
+        lists.active.tailMap(depth + 1).clear();
+        var parent = lists.active.lowerEntry(depth);
+        int indent = parent == null ? 0 : parent.getValue().contentIndent();
+        if (previous != null && !previous.numId().equals(para.getNumID())) {
+            sb.append("\n").append(" ".repeat(indent)).append("<!-- list break -->\n\n");
+        }
+        boolean continuing = previous != null && previous.numId().equals(para.getNumID());
+        if (definition.ordered() && !continuing && (value.signum() < 0 || value.toString().length() > 9)) {
+            ctx.warnings().add(new ConvertWarning("UNSUPPORTED_LIST_START", value.toString(),
+                "Markdown으로 표현할 수 없는 목록 시작 번호를 1로 변환했습니다: " + value));
+            value = BigInteger.ONE;
+        }
+        String marker = definition.ordered() ? (continuing ? "1." : value + ".") : "-";
+        int contentIndent = indent + marker.length() + 1;
+        sb.append(" ".repeat(indent)).append(marker).append(" ")
+            .append(text.replace("\n", "\n" + " ".repeat(contentIndent))).append("\n");
+        lists.active.put(depth, new ListLevel(para.getNumID(), depth, contentIndent,
+            para.getIndentationLeft()));
     }
 
     private String paragraphText(XWPFParagraph para, ConvertContext ctx) {
@@ -157,24 +221,42 @@ public class DocxToMarkdownConverter {
         return 0;
     }
 
-    private boolean isOrderedList(XWPFDocument doc, XWPFParagraph para) {
-        try {
-            BigInteger numId = para.getNumID();
-            if (numId == null) return false;
-            XWPFNumbering numbering = doc.getNumbering();
-            if (numbering == null) return false;
-            XWPFNum num = numbering.getNum(numId);
-            if (num == null) return false;
-            BigInteger abstractNumId = num.getCTNum().getAbstractNumId().getVal();
-            XWPFAbstractNum abstractNum = numbering.getAbstractNum(abstractNumId);
-            if (abstractNum == null) return false;
-            int ilvl = para.getNumIlvl() != null ? para.getNumIlvl().intValue() : 0;
-            CTLvl lvl = abstractNum.getCTAbstractNum().getLvlArray(ilvl);
-            if (lvl == null || lvl.getNumFmt() == null) return false;
-            return !"bullet".equals(lvl.getNumFmt().getVal().toString());
-        } catch (Exception e) {
-            return false;
+    private ListDefinition listDefinition(XWPFDocument doc, XWPFParagraph para, int depth,
+                                           ConvertContext ctx) {
+        XWPFNumbering numbering = doc.getNumbering();
+        XWPFNum num = numbering == null ? null : numbering.getNum(para.getNumID());
+        XWPFAbstractNum abstractNum = num == null || num.getCTNum().getAbstractNumId() == null
+            ? null : numbering.getAbstractNum(num.getCTNum().getAbstractNumId().getVal());
+        CTLvl lvl = abstractNum == null ? null : abstractNum.getCTAbstractNum().getLvlList().stream()
+            .filter(level -> BigInteger.valueOf(depth).equals(level.getIlvl())).findFirst().orElse(null);
+        BigInteger startOverride = null;
+        if (num != null) {
+            for (var override : num.getCTNum().getLvlOverrideList()) {
+                if (BigInteger.valueOf(depth).equals(override.getIlvl())) {
+                    if (override.isSetLvl()) lvl = override.getLvl();
+                    if (override.isSetStartOverride()) startOverride = override.getStartOverride().getVal();
+                }
+            }
         }
+        if (depth < 0 || depth > 8 || lvl == null || lvl.getNumFmt() == null
+                || lvl.getNumFmt().getVal() == null) {
+            ctx.warnings().add(new ConvertWarning("LIST_NUMBERING_UNRESOLVED", para.getText(),
+                "목록 번호 정의를 확인할 수 없어 일반 문단으로 변환했습니다."));
+            return null;
+        }
+        String format = lvl.getNumFmt().getVal().toString();
+        if (!"bullet".equals(format) && !"decimal".equals(format)) {
+            ctx.warnings().add(new ConvertWarning("UNSUPPORTED_LIST_FORMAT", format,
+                "지원하지 않는 목록 번호 형식을 십진수로 변환했습니다: " + format));
+        }
+        BigInteger start = startOverride != null ? startOverride
+            : lvl.getStart() == null ? BigInteger.ONE : lvl.getStart().getVal();
+        int restartLevel = depth - 1;
+        if (lvl.getLvlRestart() != null) {
+            int restart = lvl.getLvlRestart().getVal().intValue();
+            if (restart >= 0 && restart <= depth) restartLevel = restart - 1;
+        }
+        return new ListDefinition(!"bullet".equals(format), start, restartLevel);
     }
 
     private void appendTable(XWPFTable table, StringBuilder sb, ConvertContext ctx) {

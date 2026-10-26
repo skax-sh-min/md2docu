@@ -4,6 +4,7 @@ import com.md2docu.model.ConvertOptions;
 import com.md2docu.model.ConvertResult;
 import com.md2docu.model.ConvertWarning;
 import com.md2docu.util.ZipExtractor;
+import com.md2docu.util.ImageResolver.LocalImagePaths;
 import org.jsoup.Jsoup;
 import org.jsoup.safety.Safelist;
 import org.springframework.beans.factory.annotation.Value;
@@ -372,7 +373,8 @@ public class ConvertService {
         try {
             if (mdFile == null) throw new IOException("ZIP 파일 안에 .md 파일이 없습니다.");
             String markdown = Files.readString(mdFile);
-            return convertMarkdown(markdown, format, options, basePath, baseName(mdFile.getFileName().toString()));
+            LocalImagePaths imagePaths = new LocalImagePaths(basePath, mdFile.getParent());
+            return convertMarkdown(markdown, format, options, imagePaths, baseName(mdFile.getFileName().toString()));
         } finally {
             zipExtractor.cleanup(basePath);
         }
@@ -381,12 +383,12 @@ public class ConvertService {
     // ── 핵심 변환 로직 ────────────────────────────────────────────────────────
 
     private ConvertResult convertMarkdown(String markdown, String format,
-                                         ConvertOptions options, Path basePath, String baseName) throws IOException {
-        return convertMarkdown(markdown, format, options, basePath, baseName, null);
+                                         ConvertOptions options, LocalImagePaths imagePaths, String baseName) throws IOException {
+        return convertMarkdown(markdown, format, options, imagePaths, baseName, null);
     }
 
     private ConvertResult convertMarkdown(String markdown, String format,
-                                         ConvertOptions options, Path basePath, String baseName,
+                                         ConvertOptions options, LocalImagePaths imagePaths, String baseName,
                                          String baseUrl) throws IOException {
         List<ConvertWarning> warnings = new ArrayList<>();
         String html = markdownService.toHtml(markdown, options.isGenerateToc(), options.isNumberHeadings());
@@ -399,11 +401,11 @@ public class ConvertService {
         String fileName;
 
         if ("docx".equalsIgnoreCase(format)) {
-            fileBytes = docxConverter.convert(html, options, basePath, warnings);
+            fileBytes = docxConverter.convert(html, options, imagePaths, warnings);
             contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
             fileName = baseName + ".docx";
         } else {
-            fileBytes = pdfConverter.convert(html, options, basePath, warnings);
+            fileBytes = pdfConverter.convert(html, options, imagePaths, warnings);
             contentType = "application/pdf";
             fileName = baseName + ".pdf";
         }

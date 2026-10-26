@@ -4,6 +4,7 @@ import com.md2docu.model.ConvertOptions;
 import com.md2docu.model.ConvertWarning;
 import com.md2docu.model.UserSettings;
 import com.md2docu.util.ImageResolver;
+import com.md2docu.util.ImageResolver.LocalImagePaths;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
@@ -53,6 +54,7 @@ class PdfConverterTest {
     private final ConvertOptions options = new ConvertOptions();
     private final List<ConvertWarning> warnings = new ArrayList<>();
     private ImageResolver imageResolver;
+    private LocalImagePaths imagePaths;
     private PdfConverter converter;
     private byte[] png;
     private String dataUri;
@@ -70,6 +72,7 @@ class PdfConverterTest {
         dataUri = "data:image/png;base64," + Base64.getEncoder().encodeToString(png);
         Files.createDirectories(basePath.resolve("images"));
         Files.write(basePath.resolve("images").resolve("pixel.png"), png);
+        imagePaths = new LocalImagePaths(basePath, basePath);
 
         imageResolver = spy(new ImageResolver());
         UserSettingsService settingsService = mock(UserSettingsService.class);
@@ -100,7 +103,7 @@ class PdfConverterTest {
         }
         String resolvedSrc = source == ImageSource.REMOTE_UPPERCASE
             ? "https://example.com/pixel.png" : src;
-        verify(imageResolver).resolveToBase64DataUri(resolvedSrc, basePath, warnings,
+        verify(imageResolver).resolveToBase64DataUri(resolvedSrc, imagePaths, warnings,
             options.getRemoteImageTimeout());
     }
 
@@ -126,7 +129,7 @@ class PdfConverterTest {
             assertPng(pdf);
             assertThat(warnings).isEmpty();
         }
-        verify(imageResolver).resolveToBase64DataUri(src, basePath, warnings,
+        verify(imageResolver).resolveToBase64DataUri(src, imagePaths, warnings,
             options.getRemoteImageTimeout());
     }
 
@@ -222,7 +225,8 @@ class PdfConverterTest {
         Files.write(basePath.resolve("private.png"), png);
 
         try (PDDocument pdf = Loader.loadPDF(
-                converter.convert("<img src='" + src + "'>", options, uploadRoot, warnings))) {
+                converter.convert("<img src='" + src + "'>", options,
+                    new LocalImagePaths(uploadRoot, uploadRoot), warnings))) {
             assertThat(images(pdf)).isEmpty();
             assertThat(warnings).singleElement()
                 .extracting(ConvertWarning::getType).isEqualTo("IMAGE_NOT_FOUND");
@@ -388,7 +392,7 @@ class PdfConverterTest {
     }
 
     private PDDocument convert(String html) throws IOException {
-        return Loader.loadPDF(converter.convert(html, options, basePath, warnings));
+        return Loader.loadPDF(converter.convert(html, options, imagePaths, warnings));
     }
 
     private void assertPng(PDDocument pdf) throws IOException {

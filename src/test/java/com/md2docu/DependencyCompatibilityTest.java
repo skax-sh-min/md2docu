@@ -2,6 +2,7 @@ package com.md2docu;
 
 import com.md2docu.model.UserSettings;
 import com.md2docu.service.UserSettingsService;
+import com.md2docu.util.ZipExtractor;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.pdmodel.interactive.action.PDActionGoTo;
@@ -13,6 +14,10 @@ import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFRelation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -31,11 +36,13 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -45,6 +52,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -69,6 +77,9 @@ class DependencyCompatibilityTest {
 
     @MockitoSpyBean
     private UserSettingsService settingsService;
+
+    @MockitoSpyBean
+    private ZipExtractor zipExtractor;
 
     @BeforeEach
     void useInMemorySettings() {
@@ -182,6 +193,163 @@ class DependencyCompatibilityTest {
             assertThat(images.getFirst().getImage().getHeight()).isEqualTo(2);
             assertThat(page.getAnnotations()).anyMatch(annotation ->
                 annotation instanceof PDAnnotationLink link && link.getAction() instanceof PDActionGoTo);
+        }
+    }
+
+    @ParameterizedTest
+    @MethodSource("zipImagePaths")
+    void resolvesZipImagesAgainstTheDocumentAndArchiveRoot(
+            String format, String document, String reference, String imagePath) throws Exception {
+        byte[] image = png();
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        String parent = document.contains("/") ? document.substring(0, document.lastIndexOf('/') + 1) : "";
+        entries.put(document, ("# Document\n\n![image](" + reference + ")").getBytes(StandardCharsets.UTF_8));
+        entries.put("images/test.png", png(0xCC3344));
+        entries.put(parent + "images/test.png", png(0xCC3344));
+        entries.put(imagePath, image);
+        ConversionResponse response = convertArchive(format, entries);
+        assertThat(response.warnings()).isEmpty();
+        assertArchiveImage(response, format, image);
+        assertArchiveCleanedUp();
+    }
+
+    private static Stream<Arguments> zipImagePaths() {
+        List<String[]> paths = List.of(
+            new String[] {"document.md", "images/test.png", "images/test.png"},
+            new String[] {"document.md", "/images/test.png", "images/test.png"},
+            new String[] {"docs/guide.md", "images/test.png", "docs/images/test.png"},
+            new String[] {"docs/guide.md", "./images/test.png", "docs/images/test.png"},
+            new String[] {"docs/guide.md", "../images/test.png", "images/test.png"},
+            new String[] {"docs/guide.md", "/images/test.png", "images/test.png"},
+            new String[] {"docs/chapters/guide.md", "images/test.png", "docs/chapters/images/test.png"},
+            new String[] {"docs/chapters/guide.md", "../../images/test.png", "images/test.png"},
+            new String[] {"docs/chapters/guide.md", "/images/test.png", "images/test.png"},
+            new String[] {"docs/guide.md", "images/test%20%26.png", "docs/images/test &.png"},
+            new String[] {"docs/guide.md", "images/test%2520%26.png", "docs/images/test%20&.png"},
+            new String[] {"docs/guide.md", "images/test.png?v=1&size=2", "docs/images/test.png"}
+        );
+        return Stream.of("pdf", "docx").flatMap(format ->
+            paths.stream().map(path -> Arguments.of(format, path[0], path[1], path[2])));
+    }
+
+    @ParameterizedTest
+    @MethodSource("zipImageContainers")
+    void resolvesNestedZipImagesInsideDifferentContainers(String format, String markdown) throws Exception {
+        byte[] image = png();
+        ConversionResponse response = convertArchive(format, Map.of(
+            "docs/guide.md", markdown.getBytes(StandardCharsets.UTF_8),
+            "docs/images/test.png", image
+        ));
+        assertThat(response.warnings()).isEmpty();
+        assertArchiveImage(response, format, image);
+        assertArchiveCleanedUp();
+    }
+
+    private static Stream<Arguments> zipImageContainers() {
+        return Stream.of("pdf", "docx").flatMap(format -> Stream.of(
+            "Text ![image](images/test.png) after.",
+            "- ![image](images/test.png)",
+            "> ![image](images/test.png)",
+            "| Image |\n| --- |\n| ![image](images/test.png) |"
+        ).map(markdown -> Arguments.of(format, markdown)));
+    }
+
+    @ParameterizedTest
+    @MethodSource("zipMissingImages")
+    void warnsAndCleansUpZipFilesWithInvalidOrMissingImages(
+            String format, String reference) throws Exception {
+        ConversionResponse response = convertArchive(format, Map.of(
+            "docs/guide.md", ("![image](" + reference + ")").getBytes(StandardCharsets.UTF_8)
+        ));
+        assertThat(response.warnings()).singleElement().satisfies(warning ->
+            assertThat(warning.get("type")).isEqualTo("IMAGE_NOT_FOUND"));
+        assertArchiveCleanedUp();
+    }
+
+    private static Stream<Arguments> zipMissingImages() {
+        return Stream.of("pdf", "docx").flatMap(format -> Stream.of(
+            "missing.png", "../../outside.png", "/../outside.png", "%2e%2e/%2e%2e/outside.png"
+        ).map(reference -> Arguments.of(format, reference)));
+    }
+
+    @Test
+    void cleansUpAnArchiveWhenConversionFails() throws Exception {
+        doThrow(new UncheckedIOException("Settings could not be loaded", new IOException("test failure")))
+            .when(settingsService).get();
+        MockMultipartFile file = new MockMultipartFile("file", "document.zip", "application/zip",
+            zip(Map.of("docs/guide.md", "Text only".getBytes(StandardCharsets.UTF_8))));
+
+        mvc.perform(multipart("/api/convert/pdf").file(file))
+            .andExpect(status().isInternalServerError());
+        assertArchiveCleanedUp();
+    }
+
+    @ParameterizedTest
+    @MethodSource("archiveFormats")
+    void cleansUpArchivesWithoutImages(String format) throws Exception {
+        ConversionResponse response = convertArchive(format, Map.of(
+            "docs/guide.md", "# Text only\n\nNo images.".getBytes(StandardCharsets.UTF_8)
+        ));
+        assertThat(response.warnings()).isEmpty();
+        assertThat(download(response, "docx".equals(format) ? DOCX_CONTENT_TYPE : MediaType.APPLICATION_PDF_VALUE))
+            .isNotEmpty();
+        assertArchiveCleanedUp();
+    }
+
+    private static Stream<String> archiveFormats() {
+        return Stream.of("pdf", "docx");
+    }
+
+    @Test
+    void cleansUpArchivesWithoutMarkdown() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "document.zip", "application/zip",
+            zip(Map.of("images/test.png", png())));
+
+        mvc.perform(multipart("/api/convert/pdf").file(file))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").isString());
+        assertArchiveCleanedUp();
+    }
+
+    private ConversionResponse convertArchive(String format, Map<String, byte[]> entries) throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "document.zip", "application/zip", zip(entries));
+        return response(mvc.perform(multipart("/api/convert/" + format).file(file))
+            .andExpect(status().isOk())
+            .andReturn());
+    }
+
+    private void assertArchiveCleanedUp() {
+        ArgumentCaptor<Path> root = ArgumentCaptor.forClass(Path.class);
+        verify(zipExtractor).cleanup(root.capture());
+        assertThat(root.getValue()).doesNotExist();
+    }
+
+    private void assertArchiveImage(ConversionResponse response, String format, byte[] expected) throws Exception {
+        if ("docx".equals(format)) {
+            try (XWPFDocument doc = new XWPFDocument(
+                    new ByteArrayInputStream(download(response, DOCX_CONTENT_TYPE)))) {
+                assertThat(doc.getAllPictures()).hasSize(1);
+                assertThat(doc.getAllPictures().getFirst().getData()).isEqualTo(expected);
+            }
+        } else {
+            try (var pdf = Loader.loadPDF(download(response, MediaType.APPLICATION_PDF_VALUE))) {
+                List<PDImageXObject> images = new ArrayList<>();
+                for (var page : pdf.getPages()) {
+                    for (var name : page.getResources().getXObjectNames()) {
+                        if (page.getResources().getXObject(name) instanceof PDImageXObject image) images.add(image);
+                    }
+                }
+                assertThat(images).hasSize(1);
+                BufferedImage actual = images.getFirst().getImage();
+                BufferedImage original = ImageIO.read(new ByteArrayInputStream(expected));
+                assertThat(actual.getWidth()).isEqualTo(original.getWidth());
+                assertThat(actual.getHeight()).isEqualTo(original.getHeight());
+                for (int y = 0; y < original.getHeight(); y++) {
+                    for (int x = 0; x < original.getWidth(); x++) {
+                        assertThat(actual.getRGB(x, y)).isEqualTo(original.getRGB(x, y));
+                    }
+                }
+            }
         }
     }
 
@@ -339,8 +507,14 @@ class DependencyCompatibilityTest {
     }
 
     private static byte[] png() throws IOException {
+        return png(0);
+    }
+
+    private static byte[] png(int rgb) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        ImageIO.write(new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB), "png", out);
+        BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB);
+        image.setRGB(0, 0, rgb);
+        ImageIO.write(image, "png", out);
         return out.toByteArray();
     }
 

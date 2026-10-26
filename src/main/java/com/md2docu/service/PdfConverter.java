@@ -4,6 +4,7 @@ import com.md2docu.model.ConvertOptions;
 import com.md2docu.model.ConvertWarning;
 import com.md2docu.model.UserSettings;
 import com.md2docu.util.ImageResolver;
+import com.md2docu.util.ImageResolver.LocalImagePaths;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import org.jsoup.Jsoup;
 import org.jsoup.helper.W3CDom;
@@ -20,7 +21,6 @@ import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.logging.Logger;
@@ -55,9 +55,9 @@ public class PdfConverter {
         this.fontService = fontService;
     }
 
-    public byte[] convert(String html, ConvertOptions options, Path basePath, List<ConvertWarning> warnings) throws IOException {
+    public byte[] convert(String html, ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) throws IOException {
         Document sanitized = sanitizeForPdf(html);
-        processImages(sanitized, options, basePath, warnings);
+        processImages(sanitized, options, imagePaths, warnings);
         processLinks(sanitized, options, warnings);
         String fullHtml = wrapHtml(sanitized.body().html(), options);
 
@@ -103,7 +103,7 @@ public class PdfConverter {
         }
     }
 
-    private void processImages(Document document, ConvertOptions options, Path basePath,
+    private void processImages(Document document, ConvertOptions options, LocalImagePaths imagePaths,
                                List<ConvertWarning> warnings) {
         for (Element image : document.select("img")) {
             if (!options.isIncludeImages()) {
@@ -120,9 +120,9 @@ public class PdfConverter {
             } else if (!isAllowedImageUri(uri, src)) {
                 warnings.add(ConvertWarning.unsupportedResource(src));
             } else {
-                String resolvedSrc = uri.getScheme() == null ? uri.getPath()
+                String resolvedSrc = uri.getScheme() == null ? src
                     : uri.getScheme().toLowerCase(Locale.ROOT) + src.substring(src.indexOf(':'));
-                dataUri = imageResolver.resolveToBase64DataUri(resolvedSrc, basePath, warnings,
+                dataUri = imageResolver.resolveToBase64DataUri(resolvedSrc, imagePaths, warnings,
                     options.getRemoteImageTimeout());
             }
 

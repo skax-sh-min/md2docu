@@ -8,6 +8,7 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
@@ -18,9 +19,11 @@ public class ImageResolver {
 
     private static final long MAX_IMAGE_BYTES = 50L * 1024 * 1024; // 50 MB
 
-    public String resolveToBase64DataUri(String src, Path basePath, List<ConvertWarning> warnings, int timeout) {
+    public record LocalImagePaths(Path root, Path documentDir) {}
+
+    public String resolveToBase64DataUri(String src, LocalImagePaths paths, List<ConvertWarning> warnings, int timeout) {
         try {
-            byte[] bytes = resolveToBytes(src, basePath, warnings, timeout);
+            byte[] bytes = resolveToBytes(src, paths, warnings, timeout);
             if (bytes == null) return null;
             String mime = guessMimeType(src);
             return "data:" + mime + ";base64," + Base64.getEncoder().encodeToString(bytes);
@@ -30,7 +33,7 @@ public class ImageResolver {
         }
     }
 
-    public byte[] resolveToBytes(String src, Path basePath, List<ConvertWarning> warnings, int timeout) {
+    public byte[] resolveToBytes(String src, LocalImagePaths paths, List<ConvertWarning> warnings, int timeout) {
         if (src == null || src.isBlank()) return null;
 
         if (src.startsWith("data:")) {
@@ -42,25 +45,35 @@ public class ImageResolver {
             return fetchRemote(src, warnings, timeout);
         }
 
-        if (basePath != null) {
-            String relativeSrc = src;
-            while (relativeSrc.startsWith("/")) relativeSrc = relativeSrc.substring(1);
-            Path imagePath = basePath.resolve(relativeSrc).normalize();
-            if (!imagePath.startsWith(basePath)) {
-                warnings.add(ConvertWarning.imageNotFound(src));
-                return null;
-            }
-            if (Files.exists(imagePath)) {
-                try {
-                    if (Files.size(imagePath) > MAX_IMAGE_BYTES) {
-                        warnings.add(ConvertWarning.imageNotFound(src + " (파일이 너무 큼, 최대 50MB)"));
-                        return null;
-                    }
-                    return Files.readAllBytes(imagePath);
-                } catch (Exception e) {
+        if (paths != null) {
+            try {
+                URI uri = new URI(src);
+                if (uri.isAbsolute() || uri.getRawAuthority() != null
+                        || uri.getPath() == null || uri.getPath().isEmpty()) {
                     warnings.add(ConvertWarning.imageNotFound(src));
+                    return null;
                 }
-            } else {
+                Path root = paths.root().toAbsolutePath().normalize();
+                Path documentDir = paths.documentDir().toAbsolutePath().normalize();
+                String relativeSrc = uri.getPath();
+                boolean rootRelative = relativeSrc.startsWith("/");
+                while (relativeSrc.startsWith("/")) relativeSrc = relativeSrc.substring(1);
+                Path imagePath = (rootRelative ? root : documentDir).resolve(relativeSrc).normalize();
+                if (!documentDir.startsWith(root) || !imagePath.startsWith(root)) {
+                    warnings.add(ConvertWarning.imageNotFound(src));
+                    return null;
+                }
+                Path realImage = imagePath.toRealPath();
+                if (!realImage.startsWith(root.toRealPath()) || !Files.isRegularFile(realImage)) {
+                    warnings.add(ConvertWarning.imageNotFound(src));
+                    return null;
+                }
+                if (Files.size(realImage) > MAX_IMAGE_BYTES) {
+                    warnings.add(ConvertWarning.imageNotFound(src + " (파일이 너무 큼, 최대 50MB)"));
+                    return null;
+                }
+                return Files.readAllBytes(realImage);
+            } catch (IOException | URISyntaxException | IllegalArgumentException e) {
                 warnings.add(ConvertWarning.imageNotFound(src));
             }
         }

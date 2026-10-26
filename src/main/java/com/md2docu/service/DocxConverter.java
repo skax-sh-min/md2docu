@@ -4,6 +4,7 @@ import com.md2docu.model.ConvertOptions;
 import com.md2docu.model.ConvertWarning;
 import com.md2docu.model.UserSettings;
 import com.md2docu.util.ImageResolver;
+import com.md2docu.util.ImageResolver.LocalImagePaths;
 import org.apache.poi.util.Units;
 import org.apache.poi.xwpf.usermodel.*;
 import org.jsoup.Jsoup;
@@ -21,7 +22,6 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -47,13 +47,13 @@ public class DocxConverter {
         this.settingsService = settingsService;
     }
 
-    public byte[] convert(String html, ConvertOptions options, Path basePath, List<ConvertWarning> warnings) throws IOException {
+    public byte[] convert(String html, ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) throws IOException {
         XWPFDocument doc = new XWPFDocument();
         setupDefaultStyles(doc, options);
 
         int[] bkId = {0};
         Document jsoupDoc = Jsoup.parse(html);
-        processBlockNodes(doc, jsoupDoc.body().childNodes(), options, basePath, warnings, bkId);
+        processBlockNodes(doc, jsoupDoc.body().childNodes(), options, imagePaths, warnings, bkId);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         doc.write(out);
@@ -64,7 +64,7 @@ public class DocxConverter {
     // ── 블록 요소 처리 ────────────────────────────────────────────────────────
 
     private void processBlockNodes(XWPFDocument doc, List<Node> nodes,
-                                   ConvertOptions options, Path basePath, List<ConvertWarning> warnings,
+                                   ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings,
                                    int[] bkId) {
         for (Node node : nodes) {
             if (node instanceof TextNode tn) {
@@ -74,13 +74,13 @@ public class DocxConverter {
                     p.createRun().setText(text);
                 }
             } else if (node instanceof Element el) {
-                processBlockElement(doc, el, options, basePath, warnings, bkId);
+                processBlockElement(doc, el, options, imagePaths, warnings, bkId);
             }
         }
     }
 
     private void processBlockElement(XWPFDocument doc, Element el,
-                                     ConvertOptions options, Path basePath, List<ConvertWarning> warnings,
+                                     ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings,
                                      int[] bkId) {
         switch (el.tagName()) {
             case "h1" -> addHeading(doc, el, 1, bkId);
@@ -93,15 +93,15 @@ public class DocxConverter {
                 XWPFParagraph p = doc.createParagraph();
                 p.setSpacingBetween(1.2);
                 p.setSpacingAfter(Twips.SPACE_PARA_AFTER);
-                processInlineNodes(doc, p, el.childNodes(), options, basePath, warnings, new RunState());
+                processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, new RunState());
             }
             case "pre" -> addCodeBlock(doc, el);
-            case "ul" -> addList(doc, el, false, 1, options, basePath, warnings);
-            case "ol" -> addList(doc, el, true, 1, options, basePath, warnings);
-            case "blockquote" -> addBlockquote(doc, el, options, basePath, warnings);
-            case "table" -> addTable(doc, el, options, basePath, warnings);
+            case "ul" -> addList(doc, el, false, 1, options, imagePaths, warnings);
+            case "ol" -> addList(doc, el, true, 1, options, imagePaths, warnings);
+            case "blockquote" -> addBlockquote(doc, el, options, imagePaths, warnings);
+            case "table" -> addTable(doc, el, options, imagePaths, warnings);
             case "hr" -> addHorizontalLine(doc);
-            case "img" -> addImageParagraph(doc, el, options, basePath, warnings);
+            case "img" -> addImageParagraph(doc, el, options, imagePaths, warnings);
             default -> {
                 if (!el.childNodes().isEmpty()) {
                     boolean isToc = el.hasClass("toc");
@@ -109,7 +109,7 @@ public class DocxConverter {
                         addSpacerParagraph(doc, Twips.SPACE_TOC_BEFORE);
                         addTocTitle(doc);
                     }
-                    processBlockNodes(doc, el.childNodes(), options, basePath, warnings, bkId);
+                    processBlockNodes(doc, el.childNodes(), options, imagePaths, warnings, bkId);
                     if (isToc) addSpacerParagraph(doc, Twips.SPACE_TOC_AFTER);
                 }
             }
@@ -119,7 +119,7 @@ public class DocxConverter {
     // ── 인라인 요소 처리 ──────────────────────────────────────────────────────
 
     private void processInlineNodes(XWPFDocument doc, XWPFParagraph para, List<Node> nodes,
-                                    ConvertOptions options, Path basePath, List<ConvertWarning> warnings,
+                                    ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings,
                                     RunState state) {
         for (Node node : nodes) {
             if (node instanceof TextNode tn) {
@@ -128,31 +128,31 @@ public class DocxConverter {
                     applyRun(para, text, state);
                 }
             } else if (node instanceof Element el) {
-                processInlineElement(doc, para, el, options, basePath, warnings, state);
+                processInlineElement(doc, para, el, options, imagePaths, warnings, state);
             }
         }
     }
 
     private void processInlineElement(XWPFDocument doc, XWPFParagraph para, Element el,
-                                      ConvertOptions options, Path basePath, List<ConvertWarning> warnings,
+                                      ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings,
                                       RunState state) {
         switch (el.tagName()) {
             case "strong", "b" ->
-                processInlineNodes(doc, para, el.childNodes(), options, basePath, warnings, state.withBold(true));
+                processInlineNodes(doc, para, el.childNodes(), options, imagePaths, warnings, state.withBold(true));
             case "em", "i" ->
-                processInlineNodes(doc, para, el.childNodes(), options, basePath, warnings, state.withItalic(true));
+                processInlineNodes(doc, para, el.childNodes(), options, imagePaths, warnings, state.withItalic(true));
             case "del", "s" ->
-                processInlineNodes(doc, para, el.childNodes(), options, basePath, warnings, state.withStrike(true));
+                processInlineNodes(doc, para, el.childNodes(), options, imagePaths, warnings, state.withStrike(true));
             case "code" ->
-                processInlineNodes(doc, para, el.childNodes(), options, basePath, warnings, state.withCode(true));
+                processInlineNodes(doc, para, el.childNodes(), options, imagePaths, warnings, state.withCode(true));
             case "a" -> addHyperlink(doc, para, el, options, warnings, state);
             case "br" -> {
                 XWPFRun run = para.createRun();
                 run.addBreak();
             }
-            case "img" -> addInlineImage(para, el, options, basePath, warnings);
+            case "img" -> addInlineImage(para, el, options, imagePaths, warnings);
             default ->
-                processInlineNodes(doc, para, el.childNodes(), options, basePath, warnings, state);
+                processInlineNodes(doc, para, el.childNodes(), options, imagePaths, warnings, state);
         }
     }
 
@@ -266,7 +266,7 @@ public class DocxConverter {
     // ── 목록 ──────────────────────────────────────────────────────────────────
 
     private void addList(XWPFDocument doc, Element listEl, boolean ordered, int depth,
-                         ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
+                         ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
         int index = 1;
         for (Element li : listEl.select("> li")) {
             XWPFParagraph p = doc.createParagraph();
@@ -281,10 +281,10 @@ public class DocxConverter {
                 .filter(n -> !(n instanceof Element e &&
                                (e.tagName().equals("ul") || e.tagName().equals("ol"))))
                 .collect(Collectors.toList());
-            processInlineNodes(doc, p, inlineNodes, options, basePath, warnings, new RunState());
+            processInlineNodes(doc, p, inlineNodes, options, imagePaths, warnings, new RunState());
 
             for (Element nested : li.select("> ul, > ol")) {
-                addList(doc, nested, nested.tagName().equals("ol"), depth + 1, options, basePath, warnings);
+                addList(doc, nested, nested.tagName().equals("ol"), depth + 1, options, imagePaths, warnings);
             }
         }
     }
@@ -292,7 +292,7 @@ public class DocxConverter {
     // ── 인용문 ────────────────────────────────────────────────────────────────
 
     private void addBlockquote(XWPFDocument doc, Element el,
-                               ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
+                               ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
         XWPFParagraph p = doc.createParagraph();
         p.setIndentationLeft(Twips.INDENT_BLOCK);
 
@@ -304,13 +304,13 @@ public class DocxConverter {
 
         RunState state = new RunState();
         state = state.withColor("666666");
-        processInlineNodes(doc, p, el.childNodes(), options, basePath, warnings, state);
+        processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, state);
     }
 
     // ── 표 ────────────────────────────────────────────────────────────────────
 
     private void addTable(XWPFDocument doc, Element tableEl,
-                          ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
+                          ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
         var rows = tableEl.select("tr");
         if (rows.isEmpty()) return;
 
@@ -331,7 +331,7 @@ public class DocxConverter {
 
                 XWPFParagraph p = cell.getParagraphs().get(0);
                 RunState state = isHeader ? new RunState().withBold(true) : new RunState();
-                processInlineNodes(doc, p, cells.get(c).childNodes(), options, basePath, warnings, state);
+                processInlineNodes(doc, p, cells.get(c).childNodes(), options, imagePaths, warnings, state);
 
                 if (isHeader) {
                     CTShd shd = cell.getCTTc().addNewTcPr().addNewShd();
@@ -369,25 +369,25 @@ public class DocxConverter {
     // ── 이미지 (블록) ────────────────────────────────────────────────────────
 
     private void addImageParagraph(XWPFDocument doc, Element imgEl,
-                                   ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
+                                   ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
         if (!options.isIncludeImages()) return;
         String src = imgEl.attr("src");
         XWPFParagraph p = doc.createParagraph();
         p.setAlignment(ParagraphAlignment.CENTER);
-        embedImage(p, src, options, basePath, warnings);
+        embedImage(p, src, options, imagePaths, warnings);
     }
 
     private void addInlineImage(XWPFParagraph para, Element imgEl,
-                                ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
+                                ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
         if (!options.isIncludeImages()) return;
         String src = imgEl.attr("src");
-        embedImage(para, src, options, basePath, warnings);
+        embedImage(para, src, options, imagePaths, warnings);
     }
 
     private void embedImage(XWPFParagraph para, String src,
-                            ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
+                            ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
         try {
-            byte[] bytes = imageResolver.resolveToBytes(src, basePath, warnings, options.getRemoteImageTimeout());
+            byte[] bytes = imageResolver.resolveToBytes(src, imagePaths, warnings, options.getRemoteImageTimeout());
             if (bytes == null) {
                 para.createRun().setText("[이미지 로드 실패: " + src + "]");
                 return;

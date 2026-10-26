@@ -64,16 +64,29 @@ JAR 이름의 버전은 [pom.xml](pom.xml)의 프로젝트 버전을 따릅니�
 
 ### ZIP 파일 구성
 
-현재는 Markdown 파일을 ZIP 루트에 두는 구성을 권장합니다.
+Markdown 파일은 ZIP 루트 또는 하위 폴더에 둘 수 있습니다.
 
 ```text
 archive.zip
-├── document.md
+├── docs
+│   ├── document.md
+│   └── images
+│       └── figure.png
 └── images
-    └── figure.png
+    └── shared.png
 ```
 
-본문에서는 `![그림](images/figure.png)`처럼 참조합니다. 여러 MD가 있으면 가장 얕은 경로의 문서 하나를 선택하며, 같은 깊이의 문서 선택은 명시적으로 보장하지 않습니다. 중첩 문서의 상대 이미지 경로와 일부 이미지 형식에는 알려진 제한이 있습니다.
+위 구성의 `docs/document.md`에서는 다음 경로를 사용할 수 있습니다. PDF와 DOCX 모두 같은 규칙을 적용합니다.
+
+| 이미지 참조 | 해석 위치 |
+|-------------|-----------|
+| `images/figure.png` | 문서 폴더 기준의 `docs/images/figure.png` |
+| `../images/shared.png` | ZIP 내부 상위 폴더의 `images/shared.png` |
+| `/images/shared.png` | ZIP 루트 기준의 `images/shared.png` |
+
+ZIP 범위 밖으로 벗어나는 참조는 읽지 않고 `IMAGE_NOT_FOUND` 경고를 반환합니다. URL 인코딩된 파일명은 한 번만 디코딩합니다.
+
+여러 MD가 있으면 가장 얕은 경로의 문서 하나를 선택하며, 같은 깊이의 문서 선택은 명시적으로 보장하지 않습니다. 일부 이미지 형식에는 알려진 제한이 있습니다.
 
 ### DOCX 역변환 결과
 
@@ -240,11 +253,12 @@ java -jar .\target\md2docu-0.1.4-SNAPSHOT.jar `
 ## 이미지와 한글 폰트
 
 - 로컬 이미지는 ZIP과 함께 업로드합니다. 서버의 임의 절대 경로를 읽는 기능은 아닙니다.
+- 상대 이미지 경로는 선택된 Markdown의 부모 폴더를 기준으로 해석합니다. `../`도 ZIP 범위 안에서만 허용합니다.
 - `/images/fig.png` 형식은 ZIP 루트 기준 참조로 처리합니다.
 - 원격 HTTP(S) 이미지와 Base64 이미지 해석 경로가 있으나 형식 및 출력 방식별 제한이 있습니다.
 - 이미지 실패는 가능한 경우 플레이스홀더와 `warnings`로 보고하지만, 현재 일부 누락 경로에는 경고도 빠질 수 있습니다.
 
-PDF는 HTML 정제를 유지하면서 이미지 주소를 검증·해석하며, URL 인코딩된 로컬 파일명과 HTML 엔티티를 처리합니다. 주소 해석 단계의 누락·로드 실패는 플레이스홀더와 경고로 알리고, 미지원 이미지 주소는 `UNSUPPORTED_RESOURCE`로 보고합니다. 기존 ZIP 경로 범위와 원격 이미지 주소 제한은 유지합니다. 이미지 타입 판별·손상 데이터·형식별 지원의 전체 개선은 [PLAN.md](PLAN.md)의 B06에 남아 있습니다.
+PDF는 HTML 정제를 유지하면서 이미지 주소를 검증·해석하며, HTML 엔티티를 처리합니다. 로컬 파일명의 URL 디코딩은 PDF·DOCX의 공통 이미지 해석기에서 수행합니다. 주소 해석 단계의 누락·로드 실패는 플레이스홀더와 경고로 알리고, 미지원 이미지 주소는 `UNSUPPORTED_RESOURCE`로 보고합니다. 기존 ZIP 경로 범위와 원격 이미지 주소 제한은 유지합니다. 이미지 타입 판별·손상 데이터·형식별 지원의 전체 개선은 [PLAN.md](PLAN.md)의 B06에 남아 있습니다.
 
 PDF 글꼴은 [application.properties](src/main/resources/application.properties)의 `app.pdf.font.paths`에 지정한 `경로|패밀리명` 목록에서 존재하는 파일을 감지합니다. Windows 맑은 고딕과 Linux Noto Sans CJK 등의 기본 후보가 있지만 서버 환경에 맞는 실제 경로를 설정해야 합니다.
 
@@ -301,17 +315,22 @@ mvn verify
 # PDF 자원 처리 회귀 테스트만 실행
 mvn "-Dtest=PdfConverterTest" test
 
+# ZIP 이미지 경로와 API 호환성 테스트
+mvn "-Dtest=ImageResolverTest,DependencyCompatibilityTest" test
+
 # 실제 해석된 의존성 버전 확인
 mvn dependency:list
 ```
 
-2026-10-26 기준 **70개 테스트 통과**: 호환성 13개, PDF 회귀 48개, 설정 9개.
+2026-10-26 기준 **130개 테스트 통과**: 호환성 57개, PDF 회귀 48개, 설정 9개, 이미지 경로 16개.
 
 - Spring Boot 4 애플리케이션 컨텍스트, MVC·Thymeleaf·JSON 응답
 - 실제 PDF 생성 및 위치 정렬한 텍스트 추출
 - 동일 PNG의 로컬·HTTP(S)·Base64 입력에 대한 PDF 이미지 객체·픽셀 검증
 - PDF 목차의 실제 대상 페이지·위치, 링크 전략·앵커 ID 보존, URI·HTML 엔티티, 누락·미지원 주소 경고
 - ZIP → PDF의 이미지·목차·첨부 경고 및 기존 경로·원격 주소 접근 제한 유지
+- 루트·중첩 ZIP의 PDF/DOCX 이미지 바이트·픽셀, 문서 상대·루트·상위 경로, 인코딩된 파일명과 경계 차단
+- 이미지 없음·누락·잘못된 경로·변환 오류·MD 없음의 임시 디렉터리 정리
 - DOCX 생성·다운로드, 표·하이퍼링크·ZIP 이미지 임베드
 - DOCX → Markdown, 이미지 추출 ZIP, 챕터 분리
 - Jackson 3 설정 저장·로드·초기화·기존 JSON 속성 호환
@@ -323,7 +342,6 @@ mvn dependency:list
 
 다음 개선 과제가 남아 있습니다.
 
-- ZIP 하위 폴더 문서의 상대 이미지 경로가 ZIP 루트 기준으로 해석됩니다.
 - H1 없는 문서의 목차 대상·번호, 목차를 켰을 때 제목 인라인 서식에 문제가 있습니다.
 - 생성 DOCX의 제목·목록은 의미 구조가 부족해 왕복 변환 시 구조를 잃을 수 있습니다.
 - DOCX 역변환의 혼합 Run·줄바꿈·탭·특수문자, 링크 내부 이미지 보존에 제한이 있습니다.

@@ -1,24 +1,37 @@
 package com.md2docu.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.md2docu.model.UserSettings;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 @Service
 public class UserSettingsService {
 
-    private static final Path SETTINGS_PATH = Path.of(
+    private static final Logger log = Logger.getLogger(UserSettingsService.class.getName());
+    private static final Path DEFAULT_SETTINGS_PATH = Path.of(
         System.getProperty("user.home"), ".md2docu", "settings.json");
 
     private final ObjectMapper mapper;
+    private final Path settingsPath;
     private volatile UserSettings cached;
 
+    @Autowired
     public UserSettingsService(ObjectMapper mapper) {
+        this(mapper, DEFAULT_SETTINGS_PATH);
+    }
+
+    UserSettingsService(ObjectMapper mapper, Path settingsPath) {
         this.mapper = mapper;
+        this.settingsPath = settingsPath;
     }
 
     public UserSettings get() {
@@ -32,28 +45,38 @@ public class UserSettingsService {
 
     public synchronized UserSettings save(UserSettings settings) throws IOException {
         clamp(settings);
-        Files.createDirectories(SETTINGS_PATH.getParent());
-        mapper.writerWithDefaultPrettyPrinter().writeValue(SETTINGS_PATH.toFile(), settings);
+        write(settings);
         cached = settings;
         return settings;
     }
 
     public synchronized UserSettings reset() throws IOException {
         UserSettings defaults = new UserSettings();
-        Files.createDirectories(SETTINGS_PATH.getParent());
-        mapper.writerWithDefaultPrettyPrinter().writeValue(SETTINGS_PATH.toFile(), defaults);
+        write(defaults);
         cached = defaults;
         return defaults;
     }
 
     private UserSettings load() {
-        if (!Files.exists(SETTINGS_PATH)) return new UserSettings();
+        if (Files.notExists(settingsPath)) return new UserSettings();
         try {
-            UserSettings loaded = mapper.readValue(SETTINGS_PATH.toFile(), UserSettings.class);
+            UserSettings loaded = mapper.readValue(settingsPath.toFile(), UserSettings.class);
+            if (loaded == null) throw new IOException("설정 파일은 JSON 객체여야 합니다.");
             clamp(loaded);
             return loaded;
-        } catch (IOException e) {
-            return new UserSettings();
+        } catch (IOException | JacksonException e) {
+            log.log(Level.WARNING, "출력 설정을 불러올 수 없습니다.", e);
+            IOException cause = e instanceof IOException io ? io : new IOException(e);
+            throw new UncheckedIOException("출력 설정을 불러올 수 없습니다.", cause);
+        }
+    }
+
+    private void write(UserSettings settings) throws IOException {
+        Files.createDirectories(settingsPath.getParent());
+        try {
+            mapper.writerWithDefaultPrettyPrinter().writeValue(settingsPath.toFile(), settings);
+        } catch (JacksonException e) {
+            throw new IOException("출력 설정을 저장할 수 없습니다.", e);
         }
     }
 

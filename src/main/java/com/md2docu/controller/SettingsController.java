@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Map;
 
@@ -44,6 +45,11 @@ public class SettingsController {
 
     @ExceptionHandler(IOException.class)
     public ResponseEntity<Map<String, String>> handleIo(IOException e) {
+        return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(UncheckedIOException.class)
+    public ResponseEntity<Map<String, String>> handleUncheckedIo(UncheckedIOException e) {
         return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
     }
 }

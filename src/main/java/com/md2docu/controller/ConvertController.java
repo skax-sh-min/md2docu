@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -203,6 +204,11 @@ public class ConvertController {
     @ExceptionHandler(IOException.class)
     public ResponseEntity<Map<String, String>> handleIoException(IOException e) {
         return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(UncheckedIOException.class)
+    public ResponseEntity<Map<String, String>> handleUncheckedIoException(UncheckedIOException e) {
+        return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
     }
 
     private String requireString(Map<String, Object> body, String key) throws IOException {

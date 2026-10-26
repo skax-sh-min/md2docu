@@ -12,16 +12,16 @@ https://www.apache.org/licenses/LICENSE-2.0
 아래 라이브러리들은 Apache License, Version 2.0 하에 배포됩니다.
 
 ----
-Spring Framework 6.2.18
+Spring Framework 7.0.10
 Copyright 2002-2024 VMware, Inc. (formerly known as Pivotal Software, Inc.)
 https://github.com/spring-projects/spring-framework
 
-Spring Boot 3.5.14
+Spring Boot 4.1.2
 Copyright 2012-2024 the original author or authors.
 https://github.com/spring-projects/spring-boot
 
 ----
-Apache POI 5.5.1
+Apache POI 6.0.0
 Copyright 2001-2024 The Apache Software Foundation
 https://poi.apache.org/
 
@@ -29,14 +29,14 @@ https://poi.apache.org/
 소프트웨어를 포함합니다.
 
 ----
-Apache PDFBox 2.0.24
+Apache PDFBox / PDFBox IO 3.0.8
 Copyright 2002-2024 The Apache Software Foundation
 https://pdfbox.apache.org/
 
-Apache FontBox 2.0.24
+Apache FontBox 3.0.8
 Copyright 2002-2024 The Apache Software Foundation
 
-Apache XMPBox 2.0.24
+Apache XMPBox 3.0.8
 Copyright 2002-2024 The Apache Software Foundation
 
 ----
@@ -44,11 +44,11 @@ Apache Commons IO 2.22.0
 Copyright 2002-2024 The Apache Software Foundation
 https://commons.apache.org/proper/commons-io/
 
-Apache Commons Codec 1.18.0
+Apache Commons Codec 1.21.0
 Copyright 2002-2024 The Apache Software Foundation
 https://commons.apache.org/proper/commons-codec/
 
-Apache Commons Collections 4.5.0
+Apache Commons Collections 4.6.0
 Copyright 2001-2024 The Apache Software Foundation
 https://commons.apache.org/proper/commons-collections/
 
@@ -56,7 +56,7 @@ Apache Commons Compress 1.28.0
 Copyright 2002-2024 The Apache Software Foundation
 https://commons.apache.org/proper/commons-compress/
 
-Apache Commons Lang 3.17.0
+Apache Commons Lang 3.20.0
 Copyright 2001-2024 The Apache Software Foundation
 https://commons.apache.org/proper/commons-lang/
 
@@ -64,56 +64,57 @@ Apache Commons Math 3.6.1
 Copyright 2001-2016 The Apache Software Foundation
 https://commons.apache.org/proper/commons-math/
 
-Apache Commons Logging 1.2
+Apache Commons Logging 1.3.6
 Copyright 2003-2014 The Apache Software Foundation
 https://commons.apache.org/proper/commons-logging/
 
 ----
-Apache Tomcat Embed 10.1.54
+Apache Tomcat Embed 11.0.27
 Copyright 1999-2024 The Apache Software Foundation
 https://tomcat.apache.org/
 
 ----
-Apache Log4j 2.24.3
+Apache Log4j API / Log4j-to-SLF4J 2.26.1
 Copyright 1999-2024 The Apache Software Foundation
 https://logging.apache.org/log4j/2.x/
 
 ----
-Apache XMLBeans 5.3.0
+Apache XMLBeans 5.4.1
 Copyright 2004-2024 The Apache Software Foundation
 https://xmlbeans.apache.org/
 
 ----
-Apache Batik 1.14
+Apache Batik 1.17
 Copyright 2001-2022 The Apache Software Foundation
 https://xmlgraphics.apache.org/batik/
 
-Apache XML Graphics Commons 2.6
+Apache XML Graphics Commons 2.9
 Copyright 2001-2022 The Apache Software Foundation
 https://xmlgraphics.apache.org/commons/
 
 ----
-Xalan-Java 2.7.2
+Xalan-Java / Serializer 2.7.3
 Copyright 1999-2022 The Apache Software Foundation
 https://xalan.apache.org/xalan-j/
 
 ----
-Jackson 2.21.2 (jackson-core, jackson-databind, jackson-annotations, jackson-datatype-*)
+Jackson 3.1.7 (jackson-core, jackson-databind; tools.jackson)
+Jackson Annotations 2.21 (com.fasterxml.jackson.annotation)
 Copyright 2007- FasterXML, LLC
 https://github.com/FasterXML/jackson
 
 ----
-Thymeleaf 3.1.5
+Thymeleaf 3.1.5.RELEASE
 Copyright 2011-2024 The THYMELEAF team (www.thymeleaf.org)
 https://www.thymeleaf.org/
 
 ----
-Micrometer 1.15.11
+Micrometer 1.17.2 (micrometer-observation, micrometer-commons)
 Copyright 2017-2024 VMware, Inc.
 https://micrometer.io/
 
 ----
-SnakeYAML 2.4
+SnakeYAML 2.6
 Copyright (c) 2008, SnakeYAML (https://bitbucket.org/snakeyaml/snakeyaml)
 https://bitbucket.org/snakeyaml/snakeyaml
 
@@ -123,7 +124,7 @@ Copyright 2012 Bill Burdick (https://github.com/burdickb/SparseBitSet)
 https://github.com/burdickb/SparseBitSet
 
 ----
-pdfbox-graphics2d 0.32
+pdfbox-graphics2d 3.0.1
 Copyright 2017-2023 Tobias Warneke
 https://github.com/rototor/pdfbox-graphics2d
 
@@ -140,7 +141,7 @@ https://opensource.org/licenses/MIT
 아래 라이브러리들은 MIT License 하에 배포됩니다.
 
 ----
-jsoup 1.22.2
+jsoup 1.23.2
 Copyright (c) 2009-2024 Jonathan Hedley <https://jsoup.org/>
 https://github.com/jhy/jsoup
 
@@ -155,12 +156,12 @@ The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 
 ----
-Project Lombok 1.18.46
+Project Lombok 1.18.48 (빌드 시 사용, 실행 JAR에서는 제외)
 Copyright (C) 2009-2021 The Project Lombok Authors
 https://projectlombok.org/
 
 ----
-SLF4J API 2.0.17
+SLF4J API 2.0.20
 Copyright (c) 2004-2023 QOS.ch Sarl (Switzerland)
 https://www.slf4j.org/
 
@@ -168,6 +169,12 @@ https://www.slf4j.org/
 autolink-java 0.6.0
 Copyright (c) 2014 Robin Stocker
 https://github.com/robinst/autolink-java
+
+----
+Bootstrap 5.3.8 (CDN)
+Copyright (c) 2011-2025 The Bootstrap Authors
+https://github.com/twbs/bootstrap
+https://github.com/twbs/bootstrap/blob/v5.3.8/LICENSE
 
 ================================================================================
 BSD 2-Clause "Simplified" License
@@ -205,7 +212,7 @@ https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 ================================================================================
 
 ----
-Logback 1.5.32
+Logback 1.5.38
 Copyright (C) 1999-2024, QOS.ch
 https://logback.qos.ch/
 
@@ -220,9 +227,11 @@ https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 LGPL 2.1 조항에 따라 해당 라이브러리의 소스코드는 공식 저장소에서 확인할 수 있습니다.
 
 ----
-openhtmltopdf 1.0.10
+openhtmltopdf community fork 1.1.100
 Copyright (C) 2016 Patrick Wright and others
-https://github.com/danfickle/openhtmltopdf
+https://github.com/openhtmltopdf/openhtmltopdf
+
+원본 프로젝트: https://github.com/danfickle/openhtmltopdf
 
 원본 프로젝트: Flying Saucer (xhtmlrenderer)
 Copyright (C) 2004-2008 Torben Brosted and others
@@ -232,19 +241,6 @@ https://code.google.com/archive/p/flying-saucer/
   귀하의 코드를 오픈소스로 공개할 의무는 없습니다. 단, openhtmltopdf
   라이브러리 자체를 수정한 경우 해당 수정 사항을 공개해야 합니다.
   동적 링킹(런타임 classpath)으로 사용하는 경우 LGPL 조건을 충족합니다.
-
-================================================================================
-ICU License (MIT 호환)
-https://github.com/unicode-org/icu/blob/main/LICENSE
-================================================================================
-
-----
-ICU4J 72.1
-Copyright (C) 1991-2023 Unicode, Inc. and others.
-https://github.com/unicode-org/icu
-
-ICU License - ICU 1.8.1 and later
-SPDX-License-Identifier: Unicode-3.0
 
 ================================================================================
 W3C Software and Document License / SAX Public Domain
@@ -261,6 +257,9 @@ https://www.w3.org/
 ================================================================================
 참고 사항
 ================================================================================
+
+- 버전은 2026-10-26의 Maven runtime 의존성 해석 결과를 기준으로 갱신했습니다.
+  Bootstrap은 CDN 사용, Lombok은 빌드 시 사용 라이브러리로 별도 명시했습니다.
 
 - 테스트 스코프(test scope) 의존성(JUnit, Mockito, AssertJ 등)은
   런타임에 포함되지 않으므로 이 NOTICE에서 제외되었습니다.

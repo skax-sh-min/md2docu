@@ -3,6 +3,9 @@ package com.md2docu;
 import com.md2docu.model.UserSettings;
 import com.md2docu.service.UserSettingsService;
 import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import org.apache.pdfbox.pdmodel.interactive.action.PDActionGoTo;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.util.Units;
 import org.apache.poi.xwpf.usermodel.Document;
@@ -28,6 +31,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -144,6 +148,40 @@ class DependencyCompatibilityTest {
             assertThat(doc.getAllPictures()).hasSize(1);
             assertThat(doc.getAllPictures().get(0).getData()).isEqualTo(image);
             assertThat(doc.getAllPictures().get(0).getPictureType()).isEqualTo(Document.PICTURE_TYPE_PNG);
+        }
+    }
+
+    @Test
+    void convertsZipToPdfWithImageTocAndAttachmentWarning() throws Exception {
+        String markdown = "# Archive\n\n![image](images/test.png)\n\n"
+            + "[Attachment](files/notes.txt)\n\n## Chapter\n\nChapter body.";
+        byte[] archive = zip(Map.of(
+            "document.md", markdown.getBytes(StandardCharsets.UTF_8),
+            "images/test.png", png()
+        ));
+        MockMultipartFile file = new MockMultipartFile("file", "document.zip", "application/zip", archive);
+        ConversionResponse response = response(mvc.perform(multipart("/api/convert/pdf")
+                .file(file).param("generateToc", "true").param("linkStrategy", "warn"))
+            .andExpect(status().isOk())
+            .andReturn());
+        assertThat(response.warnings()).singleElement().satisfies(warning -> {
+            assertThat(warning.get("type")).isEqualTo("ATTACHMENT_NOT_FOUND");
+            assertThat(warning.get("target")).isEqualTo("files/notes.txt");
+        });
+
+        try (var pdf = Loader.loadPDF(download(response, MediaType.APPLICATION_PDF_VALUE))) {
+            var page = pdf.getPage(0);
+            List<PDImageXObject> images = new ArrayList<>();
+            for (var name : page.getResources().getXObjectNames()) {
+                if (page.getResources().getXObject(name) instanceof PDImageXObject image) {
+                    images.add(image);
+                }
+            }
+            assertThat(images).hasSize(1);
+            assertThat(images.getFirst().getImage().getWidth()).isEqualTo(2);
+            assertThat(images.getFirst().getImage().getHeight()).isEqualTo(2);
+            assertThat(page.getAnnotations()).anyMatch(annotation ->
+                annotation instanceof PDAnnotationLink link && link.getAction() instanceof PDActionGoTo);
         }
     }
 

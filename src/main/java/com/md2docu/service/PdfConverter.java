@@ -8,6 +8,8 @@ import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import org.jsoup.Jsoup;
 import org.jsoup.helper.W3CDom;
 import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.safety.Cleaner;
 import org.jsoup.safety.Safelist;
 import org.springframework.stereotype.Service;
 
@@ -15,12 +17,13 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.logging.Logger;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Service
 public class PdfConverter {
@@ -41,15 +44,6 @@ public class PdfConverter {
         }
     }
 
-    private static final Pattern IMG_PATTERN =
-        Pattern.compile("<img([^>]*?)\\ssrc=\"([^\"]+)\"([^>]*?)/?>");
-
-    private static final Pattern IMG_REMOVE_PATTERN =
-        Pattern.compile("<img[^>]*?>");
-
-    private static final Pattern LOCAL_LINK_PATTERN =
-        Pattern.compile("<a\\s[^>]*?href=\"(?!https?://)(?!#)(.*?)\"[^>]*?>(.*?)</a>");
-
     private final ImageResolver imageResolver;
     private final UserSettingsService settingsService;
     private final FontService fontService;
@@ -62,10 +56,10 @@ public class PdfConverter {
     }
 
     public byte[] convert(String html, ConvertOptions options, Path basePath, List<ConvertWarning> warnings) throws IOException {
-        String sanitized = sanitizeForPdf(html);
-        String processed = processImages(sanitized, options, basePath, warnings);
-        String processedLinks = processLinks(processed, options, warnings);
-        String fullHtml = wrapHtml(processedLinks, options);
+        Document sanitized = sanitizeForPdf(html);
+        processImages(sanitized, options, basePath, warnings);
+        processLinks(sanitized, options, warnings);
+        String fullHtml = wrapHtml(sanitized.body().html(), options);
 
         Document jsoupDoc = Jsoup.parse(fullHtml);
         jsoupDoc.outputSettings().syntax(Document.OutputSettings.Syntax.xml);
@@ -80,7 +74,7 @@ public class PdfConverter {
 
         builder.useUriResolver((baseUri, uri) -> {
             if (uri == null) return null;
-            String lower = uri.toLowerCase();
+            String lower = uri.toLowerCase(Locale.ROOT);
             if (lower.startsWith("file:") || lower.startsWith("jar:")) return null;
             return uri;
         });
@@ -92,10 +86,14 @@ public class PdfConverter {
         return out.toByteArray();
     }
 
-    private String sanitizeForPdf(String html) {
-        return Jsoup.clean(html, Safelist.relaxed()
+    private Document sanitizeForPdf(String html) {
+        // Resource processors validate URIs after structural cleaning.
+        Safelist safelist = Safelist.relaxed()
             .addTags("div", "span", "hr", "del", "table", "thead", "tbody", "tr", "th", "td")
-            .addAttributes(":all", "class", "id"));
+            .addAttributes(":all", "class", "id")
+            .removeProtocols("img", "src", "http", "https")
+            .removeProtocols("a", "href", "ftp", "http", "https", "mailto");
+        return new Cleaner(safelist).clean(Jsoup.parseBodyFragment(html));
     }
 
     private void tryAddFont(PdfRendererBuilder builder, String path, String family) {
@@ -105,50 +103,108 @@ public class PdfConverter {
         }
     }
 
-    private String processImages(String html, ConvertOptions options, Path basePath, List<ConvertWarning> warnings) {
-        if (!options.isIncludeImages()) {
-            return IMG_REMOVE_PATTERN.matcher(html).replaceAll("<span class=\"img-removed\">[이미지 제외됨]</span>");
-        }
-
-        Matcher m = IMG_PATTERN.matcher(html);
-        StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            String before = m.group(1);
-            String src = m.group(2);
-            String after = m.group(3);
-
-            String dataUri = imageResolver.resolveToBase64DataUri(src, basePath, warnings, options.getRemoteImageTimeout());
-            String replacement;
-            if (dataUri != null) {
-                replacement = "<img" + before + " src=\"" + dataUri + "\"" + after + "/>";
-            } else {
-                replacement = "<span class=\"img-error\">[이미지 로드 실패: " + escapeHtml(src) + "]</span>";
+    private void processImages(Document document, ConvertOptions options, Path basePath,
+                               List<ConvertWarning> warnings) {
+        for (Element image : document.select("img")) {
+            if (!options.isIncludeImages()) {
+                image.replaceWith(new Element("span").addClass("img-removed").text("[이미지 제외됨]"));
+                continue;
             }
-            m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+
+            String src = image.attr("src").strip();
+            URI uri = parseUri(src);
+            String dataUri = null;
+            int warningCount = warnings.size();
+            if (src.isEmpty()) {
+                warnings.add(ConvertWarning.imageNotFound(src));
+            } else if (!isAllowedImageUri(uri, src)) {
+                warnings.add(ConvertWarning.unsupportedResource(src));
+            } else {
+                String resolvedSrc = uri.getScheme() == null ? uri.getPath()
+                    : uri.getScheme().toLowerCase(Locale.ROOT) + src.substring(src.indexOf(':'));
+                dataUri = imageResolver.resolveToBase64DataUri(resolvedSrc, basePath, warnings,
+                    options.getRemoteImageTimeout());
+            }
+
+            if (dataUri != null) {
+                image.attr("src", dataUri);
+            } else {
+                if (warnings.size() == warningCount) {
+                    warnings.add(ConvertWarning.imageNotFound(src));
+                }
+                image.replaceWith(new Element("span").addClass("img-error")
+                    .text("[이미지 로드 실패: " + src + "]"));
+            }
         }
-        m.appendTail(sb);
-        return sb.toString();
     }
 
-    private String processLinks(String html, ConvertOptions options, List<ConvertWarning> warnings) {
-        if ("ignore".equals(options.getLinkStrategy())) {
-            return html.replaceAll("<a\\s[^>]*?>", "").replaceAll("</a>", "");
-        }
-        if ("warn".equals(options.getLinkStrategy())) {
-            Matcher m = LOCAL_LINK_PATTERN.matcher(html);
-            StringBuilder sb = new StringBuilder();
-            while (m.find()) {
-                String href = m.group(1);
-                String text = m.group(2);
-                warnings.add(ConvertWarning.attachmentNotFound(href));
-                m.appendReplacement(sb, Matcher.quoteReplacement(
-                    text + " <span class=\"attach-warn\">[⚠ 첨부파일 미포함: " + escapeHtml(href) + "]</span>"
-                ));
+    private void processLinks(Document document, ConvertOptions options, List<ConvertWarning> warnings) {
+        for (Element link : document.select("a")) {
+            if ("ignore".equals(options.getLinkStrategy())) {
+                link.tagName("span").removeAttr("href");
+                continue;
             }
-            m.appendTail(sb);
-            return sb.toString();
+            if (!link.hasAttr("href")) continue;
+
+            String href = link.attr("href").strip();
+            URI uri = parseUri(href);
+            if (!isAllowedLinkUri(uri)) {
+                warnings.add(ConvertWarning.unsupportedResource(href));
+                link.tagName("span").removeAttr("href");
+            } else if (href.startsWith("#")) {
+                link.attr("href", "#" + uri.getFragment());
+            } else if ("warn".equals(options.getLinkStrategy()) && uri.getScheme() == null) {
+                warnings.add(ConvertWarning.attachmentNotFound(href));
+                link.appendText(" ").appendElement("span").addClass("attach-warn")
+                    .text("[⚠ 첨부파일 미포함: " + href + "]");
+                link.tagName("span").removeAttr("href");
+            } else {
+                link.attr("href", href);
+            }
         }
-        return html;
+    }
+
+    private URI parseUri(String value) {
+        try {
+            return new URI(value);
+        } catch (URISyntaxException e) {
+            return null;
+        }
+    }
+
+    private boolean isAllowedImageUri(URI uri, String src) {
+        if (uri == null) return false;
+        if (uri.getScheme() == null) {
+            return uri.getRawAuthority() == null && uri.getPath() != null && !uri.getPath().isEmpty();
+        }
+        String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
+        if ("http".equals(scheme) || "https".equals(scheme)) {
+            return hasAllowedHost(uri);
+        }
+        if ("data".equals(scheme)) {
+            int comma = src.indexOf(',');
+            if (comma < 0) return false;
+            String header = src.substring(0, comma).toLowerCase(Locale.ROOT);
+            return header.startsWith("data:image/") && header.endsWith(";base64");
+        }
+        return false;
+    }
+
+    private boolean isAllowedLinkUri(URI uri) {
+        if (uri == null) return false;
+        if (uri.getScheme() == null) {
+            return uri.getRawAuthority() == null
+                && ((uri.getPath() != null && !uri.getPath().isEmpty()) || uri.getFragment() != null);
+        }
+        return switch (uri.getScheme().toLowerCase(Locale.ROOT)) {
+            case "http", "https", "ftp" -> hasAllowedHost(uri);
+            case "mailto" -> !uri.getRawSchemeSpecificPart().isBlank();
+            default -> false;
+        };
+    }
+
+    private boolean hasAllowedHost(URI uri) {
+        return uri.getHost() != null && uri.getUserInfo() == null && uri.getPort() <= 65535;
     }
 
     private String wrapHtml(String body, ConvertOptions options) {
@@ -172,7 +228,4 @@ public class PdfConverter {
             + PDF_STATIC_CSS;
     }
 
-    private String escapeHtml(String s) {
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
-    }
 }

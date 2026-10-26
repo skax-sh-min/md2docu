@@ -21,4 +21,8 @@ public class ConvertWarning {
     public static ConvertWarning attachmentNotFound(String path) {
         return new ConvertWarning("ATTACHMENT_NOT_FOUND", path, "첨부파일을 찾을 수 없습니다: " + path);
     }
+
+    public static ConvertWarning unsupportedResource(String target) {
+        return new ConvertWarning("UNSUPPORTED_RESOURCE", target, "지원하지 않는 리소스 주소입니다: " + target);
+    }
 }

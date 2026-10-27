@@ -95,7 +95,10 @@ class DependencyCompatibilityTest {
         mvc.perform(get("/"))
             .andExpect(status().isOk())
             .andExpect(content().string(containsString("bootstrap@5.3.8/dist/css/bootstrap.min.css")))
-            .andExpect(content().string(containsString("bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js")));
+            .andExpect(content().string(containsString("bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js")))
+            .andExpect(content().string(containsString("aria-describedby=\"preview-status preview-help\"")))
+            .andExpect(content().string(containsString("id=\"preview-status\"")))
+            .andExpect(content().string(containsString("입력 텍스트와 소제목 번호 옵션만 반영")));
     }
 
     @Test

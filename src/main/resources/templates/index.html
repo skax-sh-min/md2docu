@@ -130,7 +130,9 @@ System.out.println("Hello, md2docu!");
           <label class="form-label fw-semibold mb-0">미리보기</label>
           <button class="btn btn-sm btn-outline-secondary" id="btn-preview">미리보기 갱신</button>
         </div>
-        <div id="preview-pane"></div>
+        <div id="preview-pane" aria-busy="false" aria-describedby="preview-status preview-help"></div>
+        <div id="preview-status" class="small mt-1 text-muted" role="status" aria-live="polite" aria-atomic="true"></div>
+        <p id="preview-help" class="small text-muted mt-2 mb-0">입력 텍스트와 소제목 번호 옵션만 반영하는 HTML 미리보기입니다. 목차·이미지 포함·링크 처리·페이지 크기·출력 설정은 최종 PDF/DOCX에만 적용됩니다. 로컬 이미지는 이 화면에서 표시되지 않을 수 있습니다.</p>
       </div>
     </div>
   </div>
@@ -449,29 +451,80 @@ System.out.println("Hello, md2docu!");
   }
 
   // ── 미리보기 ──────────────────────────────────────────────────────────────
-  document.getElementById('btn-preview').addEventListener('click', updatePreview);
-  document.getElementById('editor').addEventListener('input', debounce(updatePreview, 600));
+  const previewPane = document.getElementById('preview-pane');
+  const previewStatus = document.getElementById('preview-status');
+  const previewButton = document.getElementById('btn-preview');
+  let previewRevision = 0;
+  let previewController = null;
+  let previewTimer = null;
+  let hasPreview = false;
 
-  async function updatePreview() {
-    const markdown    = document.getElementById('editor').value;
-    const numbering   = document.getElementById('opt-numbering').checked;
+  previewButton.addEventListener('click', () => updatePreview());
+  document.getElementById('editor').addEventListener('input', () => updatePreview(600));
+  document.getElementById('opt-numbering').addEventListener('change', () => updatePreview());
+
+  function updatePreview(delay = 0) {
+    const revision = ++previewRevision;
+    clearTimeout(previewTimer);
+    previewTimer = null;
+    if (previewController) {
+      previewController.abort();
+      previewController = null;
+    }
+    previewPane.setAttribute('aria-busy', 'true');
+    previewButton.textContent = '미리보기 갱신';
+    setPreviewStatus(delay > 0 ? '입력이 변경되어 미리보기 갱신을 기다리고 있습니다.' : '미리보기 갱신 중입니다.', 'pending');
+    if (delay > 0) {
+      previewTimer = setTimeout(() => {
+        if (revision !== previewRevision) return;
+        previewTimer = null;
+        renderPreview(revision);
+      }, delay);
+      return;
+    }
+    return renderPreview(revision);
+  }
+
+  async function renderPreview(revision) {
+    if (revision !== previewRevision) return;
+    const controller = new AbortController();
+    previewController = controller;
     try {
       const data = await conversionJson('/api/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ markdown, numberHeadings: numbering })
+        signal: controller.signal,
+        body: JSON.stringify({
+          markdown: document.getElementById('editor').value,
+          numberHeadings: document.getElementById('opt-numbering').checked
+        })
       });
-      document.getElementById('preview-pane').innerHTML = data.html;
+      if (revision !== previewRevision) return;
+      if (data === null || typeof data !== 'object' || Array.isArray(data) || typeof data.html !== 'string') {
+        throw new Error('서버 미리보기 응답 형식이 올바르지 않습니다.');
+      }
+      previewPane.innerHTML = data.html;
+      hasPreview = true;
+      setPreviewStatus('최신 입력의 미리보기입니다.', 'ready');
     } catch (e) {
-      document.getElementById('preview-pane').textContent = '미리보기 오류: ' + e.message;
+      if (revision !== previewRevision) return;
+      setPreviewStatus('미리보기 오류: ' + e.message + ' 갱신 버튼으로 다시 시도해 주세요.', 'error');
+      previewButton.textContent = '미리보기 다시 시도';
+    } finally {
+      if (revision === previewRevision) {
+        previewController = null;
+        previewPane.setAttribute('aria-busy', 'false');
+      }
     }
   }
 
-  // 초기 미리보기
-  updatePreview();
+  function setPreviewStatus(message, state) {
+    const stale = hasPreview && state !== 'ready';
+    previewStatus.className = 'small mt-1 ' + (state === 'error' ? 'text-danger' : stale ? 'text-warning-emphasis' : 'text-muted');
+    previewStatus.textContent = message + (stale ? ' 이전 결과를 표시하고 있으며 현재 입력과 다를 수 있습니다.' : '');
+  }
 
-  // 소제목 번호 체크 변경 시 미리보기 갱신
-  document.getElementById('opt-numbering').addEventListener('change', updatePreview);
+  updatePreview();
 
   // ── 변환 ──────────────────────────────────────────────────────────────────
   document.getElementById('btn-convert').addEventListener('click', async () => {
@@ -539,7 +592,11 @@ System.out.println("Hello, md2docu!");
     } catch (e) {
       throw new Error('서버 응답이 올바른 JSON이 아닙니다 (HTTP ' + response.status + ').');
     }
-    if (!response.ok) throw new Error(data.error || '요청 실패 (HTTP ' + response.status + ')');
+    if (!response.ok) {
+      const message = data && typeof data.error === 'string' && data.error.trim()
+        ? data.error : '요청 실패 (HTTP ' + response.status + ')';
+      throw new Error(message);
+    }
     return data;
   }
 
@@ -594,11 +651,6 @@ System.out.println("Hello, md2docu!");
   function setLoading(v) {
     document.getElementById('spinner').classList.toggle('d-none', !v);
     document.getElementById('btn-convert').disabled = v;
-  }
-
-  function debounce(fn, delay) {
-    let t;
-    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
   }
 
   // ── 출력 설정 모달 ────────────────────────────────────────────────────────

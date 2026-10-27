@@ -239,10 +239,13 @@ System.out.println("Hello, md2docu!");
     <span class="spinner-border me-1 d-none" id="spinner"></span><span id="btn-label">변환하기</span>
   </button>
 
+  <p class="small text-muted mt-2 mb-0">결과는 서버 메모리에 임시 보관됩니다. 보관 한도 초과나 서버 재시작으로 기한 전에 삭제될 수 있습니다.</p>
+
   <!-- 결과 -->
   <div id="result-box" class="alert alert-success mt-3">
     <strong>✅ 변환 완료! 파일이 자동으로 다운로드됩니다.</strong>
     <a id="download-link" href="#" class="btn btn-sm btn-success ms-2">다시 받기</a>
+    <div id="result-retention" class="small mt-2"></div>
   </div>
 
   <div id="warning-box" class="alert alert-warning mt-2">
@@ -541,6 +544,11 @@ System.out.println("Hello, md2docu!");
   }
 
   function showResult(data) {
+    const expiresAt = new Date(data.expiresAt);
+    if (typeof data.expiresAt !== 'string' || !Number.isFinite(expiresAt.getTime())) {
+      throw new Error('서버 응답에 올바른 결과 만료 시각이 없습니다.');
+    }
+
     // 자동 다운로드
     const a = document.createElement('a');
     a.href = data.downloadUrl;
@@ -554,6 +562,8 @@ System.out.println("Hello, md2docu!");
     link.href = data.downloadUrl;
     link.download = data.fileName;
     link.textContent = data.fileName + ' 다시 받기';
+    document.getElementById('result-retention').textContent =
+      '보관 기한: ' + expiresAt.toLocaleString() + '. 한도 초과·서버 재시작 시 더 일찍 삭제될 수 있습니다.';
     document.getElementById('result-box').style.display = '';
 
     const warnings = data.warnings || [];

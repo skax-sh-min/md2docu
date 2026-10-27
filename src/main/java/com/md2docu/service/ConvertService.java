@@ -7,12 +7,9 @@ import com.md2docu.util.ZipExtractor;
 import com.md2docu.util.ImageResolver.LocalImagePaths;
 import org.jsoup.Jsoup;
 import org.jsoup.safety.Safelist;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
-import org.springframework.scheduling.annotation.EnableScheduling;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -30,9 +27,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.file.Files;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import java.nio.file.Path;
@@ -40,7 +35,6 @@ import java.nio.file.Path;
 import static com.md2docu.util.MarkdownText.escapeText;
 
 @Service
-@EnableScheduling
 public class ConvertService {
 
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
@@ -55,31 +49,26 @@ public class ConvertService {
     private final DocxToMarkdownConverter docxToMarkdownConverter;
     private final ZipExtractor zipExtractor;
     private final HttpClient httpClient;
-
-    @Value("${app.convert.temp-expiry-seconds:3600}")
-    private long tempExpirySeconds;
-
-    private static final int MAX_STORE_SIZE = 500;
-
-    // jobId → (result, createdAt)
-    private final Map<String, StoredResult> store = new ConcurrentHashMap<>();
+    private final ConversionResultStore resultStore;
 
     @Autowired
     public ConvertService(MarkdownService markdownService, PdfConverter pdfConverter,
                           DocxConverter docxConverter, DocxToMarkdownConverter docxToMarkdownConverter,
-                          ZipExtractor zipExtractor) {
-        this(markdownService, pdfConverter, docxConverter, docxToMarkdownConverter, zipExtractor, HTTP_CLIENT);
+                          ZipExtractor zipExtractor, ConversionResultStore resultStore) {
+        this(markdownService, pdfConverter, docxConverter, docxToMarkdownConverter,
+            zipExtractor, resultStore, HTTP_CLIENT);
     }
 
     ConvertService(MarkdownService markdownService, PdfConverter pdfConverter,
                    DocxConverter docxConverter, DocxToMarkdownConverter docxToMarkdownConverter,
-                   ZipExtractor zipExtractor, HttpClient httpClient) {
+                   ZipExtractor zipExtractor, ConversionResultStore resultStore, HttpClient httpClient) {
         this.markdownService = markdownService;
         this.pdfConverter = pdfConverter;
         this.docxConverter = docxConverter;
         this.docxToMarkdownConverter = docxToMarkdownConverter;
         this.zipExtractor = zipExtractor;
         this.httpClient = httpClient;
+        this.resultStore = resultStore;
     }
 
     // ── 파일 업로드 변환 ──────────────────────────────────────────────────────
@@ -134,7 +123,7 @@ public class ConvertService {
             result.setFileName(base + ".zip");
             result.setContentType("application/zip");
         }
-        return storeResult(result);
+        return resultStore.put(result);
     }
 
     // ── URL 변환 ──────────────────────────────────────────────────────────────
@@ -441,30 +430,17 @@ public class ConvertService {
         result.setContentType(contentType);
         result.setWarnings(warnings);
 
-        return storeResult(result);
-    }
-
-    private ConvertResult storeResult(ConvertResult result) {
-        if (store.size() >= MAX_STORE_SIZE) {
-            store.entrySet().stream()
-                .min(Comparator.comparing(e -> e.getValue().createdAt()))
-                .map(Map.Entry::getKey)
-                .ifPresent(store::remove);
-        }
-        store.put(result.getJobId(), new StoredResult(result, Instant.now()));
-        return result;
+        return resultStore.put(result);
     }
 
     // ── 다운로드 ──────────────────────────────────────────────────────────────
 
     public ConvertResult getResult(String jobId) {
-        StoredResult stored = store.get(jobId);
-        return stored != null ? stored.result() : null;
+        return resultStore.get(jobId);
     }
 
     public List<ConvertWarning> getWarnings(String jobId) {
-        StoredResult stored = store.get(jobId);
-        return stored != null ? stored.result().getWarnings() : null;
+        return resultStore.getWarnings(jobId);
     }
 
     // ── 미리보기 ─────────────────────────────────────────────────────────────
@@ -477,14 +453,6 @@ public class ConvertService {
             .addAttributes("span", "class")
             .addAttributes("p", "class")
             .addAttributes("a", "class"));
-    }
-
-    // ── 만료된 결과 정리 (1시간마다) ─────────────────────────────────────────
-
-    @Scheduled(fixedDelay = 3600_000)
-    public void evictExpired() {
-        Instant cutoff = Instant.now().minusSeconds(tempExpirySeconds);
-        store.entrySet().removeIf(e -> e.getValue().createdAt().isBefore(cutoff));
     }
 
     private String baseName(String fileName) {
@@ -516,5 +484,4 @@ public class ConvertService {
         }
     }
 
-    private record StoredResult(ConvertResult result, Instant createdAt) {}
 }

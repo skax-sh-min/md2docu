@@ -17,6 +17,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +40,7 @@ class ConversionApiTest {
         result.setDownloadUrl("/api/download/job");
         result.setFileName("Document.docx");
         result.setWarnings(List.of());
+        result.setExpiresAt(Instant.parse("2026-10-27T08:00:00Z"));
         when(service.convertText(anyString(), anyString(), any())).thenReturn(result);
         when(service.convertUrl(anyString(), anyString(), any())).thenReturn(result);
         when(service.convertFile(any(), anyString(), any())).thenReturn(result);
@@ -229,6 +231,7 @@ class ConversionApiTest {
         }
         mvc.perform(request).andExpect(status().isOk()).andExpect(jsonPath("$.jobId").value("job"))
             .andExpect(jsonPath("$.downloadUrl").value("/api/download/job"))
+            .andExpect(jsonPath("$.expiresAt").value("2026-10-27T08:00:00Z"))
             .andExpect(jsonPath("$.fileName").value("Document.docx")).andExpect(jsonPath("$.warnings").isArray());
     }
 

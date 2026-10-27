@@ -17,6 +17,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import org.springframework.web.multipart.MultipartFile;
@@ -43,6 +44,7 @@ class MultipartLimitTest {
         result.setFileName("Document.docx");
         result.setDownloadUrl("/api/download/job");
         result.setWarnings(List.of());
+        result.setExpiresAt(Instant.parse("2026-10-27T08:00:00Z"));
         when(service.convertFile(any(), anyString(), any())).thenAnswer(invocation -> {
             MultipartFile file = invocation.getArgument(0);
             observedSize.set(file.getSize());

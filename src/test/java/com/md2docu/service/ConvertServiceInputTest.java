@@ -47,7 +47,8 @@ class ConvertServiceInputTest {
     @BeforeEach
     void setUp() throws IOException {
         ReflectionTestUtils.setField(extractor, "maxExtractBytes", 1_000_000L);
-        service = new ConvertService(new MarkdownService(), pdf, docx, new DocxToMarkdownConverter(), extractor, client);
+        service = new ConvertService(new MarkdownService(), pdf, docx, new DocxToMarkdownConverter(),
+            extractor, new ConversionResultStore(3600, 500, 268435456), client);
         when(docx.convert(anyString(), any(), any(), anyList())).thenReturn(new byte[]{1});
         when(pdf.convert(anyString(), any(), any(), anyList())).thenReturn(new byte[]{2});
     }
@@ -58,7 +59,7 @@ class ConvertServiceInputTest {
     void preservesOriginalCaseAndUnicodeWithoutClientDirectories(String name, String expected) throws Exception {
         ConvertResult result = service.convertFile(file(name, "Text".getBytes(StandardCharsets.UTF_8)), "docx", options);
         assertThat(result.getFileName()).isEqualTo(expected);
-        assertThat(service.getResult(result.getJobId())).isSameAs(result);
+        assertThat(service.getResult(result.getJobId())).isEqualTo(result).isNotSameAs(result);
         assertThat(service.getWarnings(result.getJobId())).isEmpty();
         assertThat(service.getResult("missing")).isNull();
         assertThat(service.getWarnings("missing")).isNull();
@@ -220,7 +221,8 @@ class ConvertServiceInputTest {
         remote(200, content);
         var markdown = mock(MarkdownService.class);
         when(markdown.toHtml(anyString(), anyBoolean(), anyBoolean())).thenReturn("<p>Text</p>");
-        var controlled = new ConvertService(markdown, pdf, docx, new DocxToMarkdownConverter(), extractor, client);
+        var controlled = new ConvertService(markdown, pdf, docx, new DocxToMarkdownConverter(),
+            extractor, new ConversionResultStore(3600, 500, 268435456), client);
         if (bytes > 10 * 1024 * 1024) {
             assertStatus(() -> controlled.convertUrl("http://8.8.8.8/Document.md", "docx", options), 413);
             verifyNoInteractions(markdown);

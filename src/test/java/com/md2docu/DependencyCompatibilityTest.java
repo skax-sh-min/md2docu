@@ -40,6 +40,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -835,13 +836,16 @@ class DependencyCompatibilityTest {
     }
 
     private ConversionResponse response(MvcResult result) {
-        return mapper.readValue(result.getResponse().getContentAsByteArray(), ConversionResponse.class);
+        ConversionResponse response = mapper.readValue(result.getResponse().getContentAsByteArray(), ConversionResponse.class);
+        assertThat(Instant.parse(response.expiresAt())).isAfter(Instant.now());
+        return response;
     }
 
     private byte[] download(ConversionResponse response, String contentType) throws Exception {
         return mvc.perform(get(response.downloadUrl()))
             .andExpect(status().isOk())
             .andExpect(content().contentType(contentType))
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
             .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, containsString(response.fileName())))
             .andReturn().getResponse().getContentAsByteArray();
     }
@@ -889,5 +893,5 @@ class DependencyCompatibilityTest {
     }
 
     private record ConversionResponse(String jobId, String downloadUrl, String fileName,
-                                      List<Map<String, String>> warnings) {}
+                                      List<Map<String, String>> warnings, String expiresAt) {}
 }

@@ -6,6 +6,7 @@ import com.md2docu.model.ConvertWarning;
 import com.md2docu.service.ConvertService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -96,6 +97,7 @@ public class ConvertController {
                                        .replace("+", "%20");
 
         return ResponseEntity.ok()
+            .cacheControl(CacheControl.noStore())
             .contentType(MediaType.parseMediaType(result.getContentType()))
             .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encodedName)
             .body(result.getFileBytes());
@@ -143,7 +145,7 @@ public class ConvertController {
     public ResponseEntity<List<ConvertWarning>> warnings(@PathVariable String jobId) {
         List<ConvertWarning> warnings = convertService.getWarnings(jobId);
         if (warnings == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "변환 결과를 찾을 수 없습니다.");
-        return ResponseEntity.ok(warnings);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(warnings);
     }
 
     private Map<String, Object> toResponseMap(ConvertResult r) {
@@ -151,7 +153,8 @@ public class ConvertController {
             "jobId",       r.getJobId(),
             "downloadUrl", r.getDownloadUrl(),
             "fileName",    r.getFileName(),
-            "warnings",    r.getWarnings()
+            "warnings",    r.getWarnings(),
+            "expiresAt",   r.getExpiresAt().toString()
         );
     }
 

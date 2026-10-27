@@ -9,6 +9,7 @@ import com.md2docu.util.ImageResolver;
 import com.md2docu.util.ImageResolver.LocalImagePaths;
 import com.md2docu.util.ImageResolver.ResolvedImage;
 import com.md2docu.util.PageLayout;
+import com.md2docu.util.ResourceUri;
 import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
 import org.apache.poi.util.Units;
 import org.apache.poi.xwpf.usermodel.*;
@@ -24,7 +25,15 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 @Service
 public class DocxConverter {
@@ -48,9 +57,11 @@ public class DocxConverter {
         try (XWPFDocument doc = new XWPFDocument()) {
             setupDefaultStyles(doc, options, snapshot);
 
-            int[] bkId = {0};
             Document jsoupDoc = Jsoup.parse(html);
-            processBlockNodes(doc, jsoupDoc.body().childNodes(), options, imagePaths, warnings, bkId, snapshot);
+            Bookmarks bookmarks = new Bookmarks(jsoupDoc.body());
+            processBlockNodes(doc, jsoupDoc.body().childNodes(), options, imagePaths, warnings, bookmarks, snapshot);
+            bookmarks.markBlock(doc, jsoupDoc.body(), 0);
+            bookmarks.finish(warnings);
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             doc.write(out);
@@ -62,7 +73,7 @@ public class DocxConverter {
 
     private void processBlockNodes(XWPFDocument doc, List<Node> nodes,
                                    ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings,
-                                   int[] bkId, UserSettings settings) {
+                                   Bookmarks bookmarks, UserSettings settings) {
         for (Node node : nodes) {
             if (node instanceof TextNode tn) {
                 String text = tn.text().trim();
@@ -71,34 +82,39 @@ public class DocxConverter {
                     p.createRun().setText(text);
                 }
             } else if (node instanceof Element el) {
-                processBlockElement(doc, el, options, imagePaths, warnings, bkId, settings);
+                processBlockElement(doc, el, options, imagePaths, warnings, bookmarks, settings);
             }
         }
     }
 
     private void processBlockElement(XWPFDocument doc, Element el,
                                      ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings,
-                                     int[] bkId, UserSettings settings) {
+                                     Bookmarks bookmarks, UserSettings settings) {
+        int firstBodyElement = doc.getBodyElements().size();
         switch (el.tagName()) {
-            case "h1" -> addHeading(doc, el, 1, options, imagePaths, warnings, bkId, settings);
-            case "h2" -> addHeading(doc, el, 2, options, imagePaths, warnings, bkId, settings);
-            case "h3" -> addHeading(doc, el, 3, options, imagePaths, warnings, bkId, settings);
-            case "h4" -> addHeading(doc, el, 4, options, imagePaths, warnings, bkId, settings);
-            case "h5" -> addHeading(doc, el, 5, options, imagePaths, warnings, bkId, settings);
-            case "h6" -> addHeading(doc, el, 6, options, imagePaths, warnings, bkId, settings);
+            case "h1" -> addHeading(doc, el, 1, options, imagePaths, warnings, bookmarks, settings);
+            case "h2" -> addHeading(doc, el, 2, options, imagePaths, warnings, bookmarks, settings);
+            case "h3" -> addHeading(doc, el, 3, options, imagePaths, warnings, bookmarks, settings);
+            case "h4" -> addHeading(doc, el, 4, options, imagePaths, warnings, bookmarks, settings);
+            case "h5" -> addHeading(doc, el, 5, options, imagePaths, warnings, bookmarks, settings);
+            case "h6" -> addHeading(doc, el, 6, options, imagePaths, warnings, bookmarks, settings);
             case "p"  -> {
                 XWPFParagraph p = doc.createParagraph();
                 p.setSpacingBetween(settings.getLineHeight());
                 p.setSpacingAfter(Twips.SPACE_PARA_AFTER);
-                processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, new RunState(settings));
+                processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, new RunState(settings, bookmarks));
             }
-            case "pre" -> addCodeBlock(doc, el, settings);
-            case "ul" -> addList(doc, el, false, 1, options, imagePaths, warnings, settings);
-            case "ol" -> addList(doc, el, true, 1, options, imagePaths, warnings, settings);
-            case "blockquote" -> addBlockquote(doc, el, options, imagePaths, warnings, settings);
-            case "table" -> addTable(doc, el, options, imagePaths, warnings, settings);
+            case "a", "span" -> {
+                XWPFParagraph p = doc.createParagraph();
+                processInlineElement(doc, p, el, options, imagePaths, warnings, new RunState(settings, bookmarks));
+            }
+            case "pre" -> addCodeBlock(doc, el, settings, bookmarks);
+            case "ul" -> addList(doc, el, false, 1, options, imagePaths, warnings, settings, bookmarks);
+            case "ol" -> addList(doc, el, true, 1, options, imagePaths, warnings, settings, bookmarks);
+            case "blockquote" -> addBlockquote(doc, el, options, imagePaths, warnings, settings, bookmarks);
+            case "table" -> addTable(doc, el, options, imagePaths, warnings, settings, bookmarks);
             case "hr" -> addHorizontalLine(doc);
-            case "img" -> addImageParagraph(doc, el, options, imagePaths, warnings);
+            case "img" -> addImageParagraph(doc, el, options, imagePaths, warnings, new RunState(settings, bookmarks));
             default -> {
                 if (!el.childNodes().isEmpty()) {
                     boolean isToc = el.hasClass("toc");
@@ -106,11 +122,12 @@ public class DocxConverter {
                         addSpacerParagraph(doc, Twips.SPACE_TOC_BEFORE);
                         addTocTitle(doc);
                     }
-                    processBlockNodes(doc, el.childNodes(), options, imagePaths, warnings, bkId, settings);
+                    processBlockNodes(doc, el.childNodes(), options, imagePaths, warnings, bookmarks, settings);
                     if (isToc) addSpacerParagraph(doc, Twips.SPACE_TOC_AFTER);
                 }
             }
         }
+        bookmarks.markBlock(doc, el, firstBodyElement);
     }
 
     // ── 인라인 요소 처리 ──────────────────────────────────────────────────────
@@ -133,6 +150,7 @@ public class DocxConverter {
     private void processInlineElement(XWPFDocument doc, XWPFParagraph para, Element el,
                                       ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings,
                                       RunState state) {
+        state.bookmarks.mark(para, el, state.hyperlink);
         switch (el.tagName()) {
             case "strong", "b" ->
                 processInlineNodes(doc, para, el.childNodes(), options, imagePaths, warnings, state.withBold(true));
@@ -142,21 +160,31 @@ public class DocxConverter {
                 processInlineNodes(doc, para, el.childNodes(), options, imagePaths, warnings, state.withStrike(true));
             case "code" ->
                 processInlineNodes(doc, para, el.childNodes(), options, imagePaths, warnings, state.withCode(true));
-            case "a" -> addHyperlink(doc, para, el, options, warnings, state);
+            case "a" -> addHyperlink(doc, para, el, options, imagePaths, warnings, state);
             case "br" -> {
-                XWPFRun run = para.createRun();
+                XWPFRun run = createRun(para, state);
                 run.addBreak();
             }
-            case "img" -> addInlineImage(para, el, options, imagePaths, warnings);
+            case "img" -> addInlineImage(para, el, options, imagePaths, warnings, state);
             default ->
                 processInlineNodes(doc, para, el.childNodes(), options, imagePaths, warnings, state);
         }
     }
 
     private void applyRun(XWPFParagraph para, String text, RunState state) {
-        XWPFRun run = para.createRun();
-        configureRun(run, state);
+        XWPFRun run = createRun(para, state);
         run.setText(text);
+    }
+
+    private XWPFRun createRun(XWPFParagraph para, RunState state) {
+        XWPFRun run = state.hyperlink == null ? para.createRun()
+            : new XWPFHyperlinkRun(state.hyperlink, state.hyperlink.addNewR(), para);
+        configureRun(run, state);
+        if (state.hyperlink != null) {
+            run.setColor("0563C1");
+            run.setUnderline(UnderlinePatterns.SINGLE);
+        }
+        return run;
     }
 
     private void configureRun(XWPFRun run, RunState state) {
@@ -196,7 +224,7 @@ public class DocxConverter {
     // ── 제목 ──────────────────────────────────────────────────────────────────
 
     private void addHeading(XWPFDocument doc, Element el, int level, ConvertOptions options,
-                            LocalImagePaths imagePaths, List<ConvertWarning> warnings, int[] bkId, UserSettings settings) {
+                            LocalImagePaths imagePaths, List<ConvertWarning> warnings, Bookmarks bookmarks, UserSettings settings) {
         XWPFParagraph p = doc.createParagraph();
         p.setStyle("Heading" + level);
         p.setSpacingBefore(Twips.SPACE_H_BEFORE);
@@ -204,27 +232,22 @@ public class DocxConverter {
         p.setSpacingBetween(settings.getLineHeight());
 
         int size = headingSize(level, settings);
-        String id = el.attr("id");
-        int bid = bkId[0]++;
-        if (!id.isEmpty()) {
-            CTBookmark bookmark = p.getCTP().addNewBookmarkStart();
-            bookmark.setId(BigInteger.valueOf(bid));
-            bookmark.setName(id);
-        }
-        RunState state = new RunState(settings);
+        RunState state = new RunState(settings, bookmarks);
         state.headingSize = size;
         processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, state);
-        if (!id.isEmpty()) {
-            p.getCTP().addNewBookmarkEnd().setId(BigInteger.valueOf(bid));
-        }
     }
 
     // ── 코드 블록 ─────────────────────────────────────────────────────────────
 
-    private void addCodeBlock(XWPFDocument doc, Element preEl, UserSettings settings) {
+    private void addCodeBlock(XWPFDocument doc, Element preEl, UserSettings settings, Bookmarks bookmarks) {
         String code = preEl.text();
+        boolean first = true;
         for (String line : code.split("\n", -1)) {
             XWPFParagraph p = doc.createParagraph();
+            if (first) {
+                for (Element target : preEl.select("[id], a[name]")) bookmarks.mark(p, target, null);
+                first = false;
+            }
             p.setIndentationLeft(Twips.INDENT_BLOCK);
 
             CTPPr pPr = p.getCTP().getPPr() != null ? p.getCTP().getPPr() : p.getCTP().addNewPPr();
@@ -242,29 +265,37 @@ public class DocxConverter {
     // ── 목록 ──────────────────────────────────────────────────────────────────
 
     private void addList(XWPFDocument doc, Element listEl, boolean ordered, int depth,
-                         ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, UserSettings settings) {
+                         ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, UserSettings settings, Bookmarks bookmarks) {
+        int firstBodyElement = doc.getBodyElements().size();
         if (depth > 9) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "DOCX 목록은 최대 9단계까지 지원합니다.");
         BigInteger start = ordered && listEl.hasAttr("start")
             ? new BigInteger(listEl.attr("start")) : BigInteger.ONE;
         BigInteger numId = createListNumbering(doc, ordered, depth, start);
         for (Element li : listEl.select("> li")) {
             XWPFParagraph p = listParagraph(doc, depth, numId, settings);
+            bookmarks.mark(p, li, null);
             for (Node child : li.childNodes()) {
                 if (child instanceof Element e && (e.tagName().equals("ul") || e.tagName().equals("ol"))) {
-                    addList(doc, e, e.tagName().equals("ol"), depth + 1, options, imagePaths, warnings, settings);
+                    addList(doc, e, e.tagName().equals("ol"), depth + 1, options, imagePaths, warnings, settings, bookmarks);
                     p = null;
                 } else if (child instanceof Element e && e.tagName().equals("p")) {
-                    if (p == null || !p.getRuns().isEmpty()) p = listParagraph(doc, depth, null, settings);
-                    processInlineNodes(doc, p, e.childNodes(), options, imagePaths, warnings, new RunState(settings));
+                    if (p == null || hasInlineContent(p)) p = listParagraph(doc, depth, null, settings);
+                    bookmarks.mark(p, e, null);
+                    processInlineNodes(doc, p, e.childNodes(), options, imagePaths, warnings, new RunState(settings, bookmarks));
                     p = null;
                 } else {
                     if (child instanceof TextNode text && text.isBlank()
-                            && (p == null || p.getRuns().isEmpty())) continue;
+                            && (p == null || !hasInlineContent(p))) continue;
                     if (p == null) p = listParagraph(doc, depth, null, settings);
-                    processInlineNodes(doc, p, List.of(child), options, imagePaths, warnings, new RunState(settings));
+                    processInlineNodes(doc, p, List.of(child), options, imagePaths, warnings, new RunState(settings, bookmarks));
                 }
             }
         }
+        bookmarks.markBlock(doc, listEl, firstBodyElement);
+    }
+
+    private boolean hasInlineContent(XWPFParagraph paragraph) {
+        return paragraph.getCTP().sizeOfRArray() > 0 || paragraph.getCTP().sizeOfHyperlinkArray() > 0;
     }
 
     private XWPFParagraph listParagraph(XWPFDocument doc, int depth, BigInteger numId, UserSettings settings) {
@@ -302,7 +333,7 @@ public class DocxConverter {
     // ── 인용문 ────────────────────────────────────────────────────────────────
 
     private void addBlockquote(XWPFDocument doc, Element el,
-                               ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, UserSettings settings) {
+                               ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, UserSettings settings, Bookmarks bookmarks) {
         XWPFParagraph p = doc.createParagraph();
         p.setIndentationLeft(Twips.INDENT_BLOCK);
 
@@ -312,7 +343,7 @@ public class DocxConverter {
         left.setSz(BigInteger.valueOf(Twips.BORDER_QUOTE_SZ));
         left.setColor("CCCCCC");
 
-        RunState state = new RunState(settings);
+        RunState state = new RunState(settings, bookmarks);
         state = state.withColor("666666");
         processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, state);
     }
@@ -320,7 +351,7 @@ public class DocxConverter {
     // ── 표 ────────────────────────────────────────────────────────────────────
 
     private void addTable(XWPFDocument doc, Element tableEl,
-                          ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, UserSettings settings) {
+                          ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, UserSettings settings, Bookmarks bookmarks) {
         var rows = tableEl.select("tr");
         if (rows.isEmpty()) return;
 
@@ -343,7 +374,12 @@ public class DocxConverter {
                 cell.setWidth(Integer.toString(columnWidth));
 
                 XWPFParagraph p = cell.getParagraphs().get(0);
-                RunState state = isHeader ? new RunState(settings).withBold(true) : new RunState(settings);
+                bookmarks.mark(p, cells.get(c), null);
+                for (Element parent : cells.get(c).parents()) {
+                    if (parent == tableEl) break;
+                    bookmarks.mark(p, parent, null);
+                }
+                RunState state = isHeader ? new RunState(settings, bookmarks).withBold(true) : new RunState(settings, bookmarks);
                 processInlineNodes(doc, p, cells.get(c).childNodes(), options, imagePaths, warnings, state);
 
                 if (isHeader) {
@@ -382,36 +418,36 @@ public class DocxConverter {
     // ── 이미지 (블록) ────────────────────────────────────────────────────────
 
     private void addImageParagraph(XWPFDocument doc, Element imgEl,
-                                   ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
+                                   ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, RunState state) {
         if (!options.isIncludeImages()) return;
         String src = imgEl.attr("src");
         XWPFParagraph p = doc.createParagraph();
         p.setAlignment(ParagraphAlignment.CENTER);
-        embedImage(p, src, options, imagePaths, warnings);
+        embedImage(p, src, options, imagePaths, warnings, state);
     }
 
     private void addInlineImage(XWPFParagraph para, Element imgEl,
-                                ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
+                                ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, RunState state) {
         if (!options.isIncludeImages()) return;
         String src = imgEl.attr("src");
-        embedImage(para, src, options, imagePaths, warnings);
+        embedImage(para, src, options, imagePaths, warnings, state);
     }
 
     private void embedImage(XWPFParagraph para, String src,
-                            ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
+                            ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, RunState state) {
         ResolvedImage image = imageResolver.resolve(src, imagePaths, warnings, options.getRemoteImageTimeout());
         if (image == null) {
-            para.createRun().setText("[이미지 로드 실패: " + ConvertWarning.imageTarget(src) + "]");
+            applyRun(para, "[이미지 로드 실패: " + ConvertWarning.imageTarget(src) + "]", state);
             return;
         }
         try {
             int[] emu = calcImageEmu(image, para);
-            XWPFRun run = para.createRun();
+            XWPFRun run = createRun(para, state);
             run.addPicture(new ByteArrayInputStream(image.bytes()), image.pictureType(),
                 ConvertWarning.imageTarget(src), emu[0], emu[1]);
         } catch (IOException | InvalidFormatException | IllegalArgumentException e) {
             warnings.add(ConvertWarning.imageEmbedFailed(src));
-            para.createRun().setText("[이미지 로드 실패: " + ConvertWarning.imageTarget(src) + "]");
+            applyRun(para, "[이미지 로드 실패: " + ConvertWarning.imageTarget(src) + "]", state);
         }
     }
 
@@ -447,54 +483,34 @@ public class DocxConverter {
     // ── 하이퍼링크 ────────────────────────────────────────────────────────────
 
     private void addHyperlink(XWPFDocument doc, XWPFParagraph para, Element aEl,
-                              ConvertOptions options, List<ConvertWarning> warnings, RunState state) {
-        String href = aEl.attr("href");
-        String text = aEl.text();
-
-        if ("ignore".equals(options.getLinkStrategy())) {
-            applyRun(para, text, state);
+                              ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, RunState state) {
+        if ("ignore".equals(options.getLinkStrategy()) || !aEl.hasAttr("href")) {
+            processInlineNodes(doc, para, aEl.childNodes(), options, imagePaths, warnings, state);
             return;
         }
-
-        if (href.startsWith("http://") || href.startsWith("https://")) {
-            try {
-                String rId = doc.getPackagePart()
-                    .addExternalRelationship(href, XWPFRelation.HYPERLINK.getRelation())
-                    .getId();
-
-                CTHyperlink link = para.getCTP().addNewHyperlink();
-                link.setId(rId);
-
-                CTR ctr = link.addNewR();
-                XWPFHyperlinkRun run = new XWPFHyperlinkRun(link, ctr, para);
-                configureRun(run, state.withColor("0563C1"));
-                run.setUnderline(UnderlinePatterns.SINGLE);
-
-                CTText t = ctr.addNewT();
-                t.setStringValue(text);
-            } catch (Exception e) {
-                applyRun(para, text + " (" + href + ")", state);
-            }
-        } else if (href.startsWith("#")) {
-            try {
-                CTHyperlink link = para.getCTP().addNewHyperlink();
-                link.setAnchor(href.substring(1));
-                CTR ctr = link.addNewR();
-                XWPFHyperlinkRun run = new XWPFHyperlinkRun(link, ctr, para);
-                configureRun(run, state.withColor("0563C1"));
-                run.setUnderline(UnderlinePatterns.SINGLE);
-                ctr.addNewT().setStringValue(text);
-            } catch (Exception e) {
-                applyRun(para, text, state.withColor("0563C1"));
-            }
+        String href = aEl.attr("href").strip();
+        URI uri = ResourceUri.parse(href);
+        if (!ResourceUri.isAllowedLink(uri)) {
+            warnings.add(ConvertWarning.unsupportedResource(href));
+            processInlineNodes(doc, para, aEl.childNodes(), options, imagePaths, warnings, state);
+            return;
+        }
+        String anchor = href.startsWith("#") ? state.bookmarks.name(uri.getFragment()) : null;
+        if (href.startsWith("#") && anchor == null) {
+            warnings.add(ConvertWarning.hyperlinkUnresolved(href));
+            processInlineNodes(doc, para, aEl.childNodes(), options, imagePaths, warnings, state);
+        } else if ("warn".equals(options.getLinkStrategy()) && uri.getScheme() == null && !href.startsWith("#")) {
+            warnings.add(ConvertWarning.attachmentNotFound(href));
+            processInlineNodes(doc, para, aEl.childNodes(), options, imagePaths, warnings, state);
+            applyRun(para, " [⚠ 첨부파일 미포함: " + href + "]", state);
         } else {
-            // 로컬 파일 링크
-            if ("warn".equals(options.getLinkStrategy())) {
-                warnings.add(ConvertWarning.attachmentNotFound(href));
-                applyRun(para, text + " [⚠ 첨부파일 미포함]", state);
-            } else {
-                applyRun(para, text, state);
+            CTHyperlink link = para.getCTP().addNewHyperlink();
+            if (anchor != null) {
+                link.setAnchor(anchor);
+                state.bookmarks.track(link, para, uri.getFragment(), href, state.color);
             }
+            else link.setId(doc.getPackagePart().addExternalRelationship(href, XWPFRelation.HYPERLINK.getRelation()).getId());
+            processInlineNodes(doc, para, aEl.childNodes(), options, imagePaths, warnings, state.withHyperlink(link));
         }
     }
 
@@ -590,27 +606,117 @@ public class DocxConverter {
         static final int CELL_MARGIN       = 108;
     }
 
+    private static class Bookmarks {
+        private record Target(BigInteger id, String name) {}
+        private record Reference(CTHyperlink link, XWPFParagraph paragraph, Target target, String href, String color) {}
+        private final Map<String, Target> ids = new HashMap<>();
+        private final Map<Element, List<Target>> elements = new IdentityHashMap<>();
+        private final Set<Target> emitted = new HashSet<>();
+        private final List<Reference> references = new ArrayList<>();
+
+        Bookmarks(Element body) {
+            var targets = body.select("[id], a[name]");
+            Set<String> reserved = new HashSet<>();
+            for (Element element : targets) {
+                for (String id : List.of(element.id(), element.tagName().equals("a") ? element.attr("name") : "")) {
+                    if (id.matches("[A-Za-z][A-Za-z0-9_]{0,39}")) reserved.add(id.toLowerCase(Locale.ROOT));
+                }
+            }
+            Set<String> used = new HashSet<>();
+            int nextName = 1;
+            for (Element element : targets) {
+                for (String id : List.of(element.id(), element.tagName().equals("a") ? element.attr("name") : "")) {
+                    if (id.isEmpty() || ids.containsKey(id)) continue;
+                    String name = id;
+                    if (!id.matches("[A-Za-z][A-Za-z0-9_]{0,39}") || !used.add(id.toLowerCase(Locale.ROOT))) {
+                        do { name = "md2docu_" + nextName++; }
+                        while (reserved.contains(name.toLowerCase(Locale.ROOT)) || !used.add(name.toLowerCase(Locale.ROOT)));
+                    }
+                    Target target = new Target(BigInteger.valueOf(ids.size()), name);
+                    ids.put(id, target);
+                    elements.computeIfAbsent(element, key -> new ArrayList<>()).add(target);
+                }
+            }
+        }
+
+        String name(String id) {
+            Target target = ids.get(id);
+            return target == null ? null : target.name();
+        }
+
+        void track(CTHyperlink link, XWPFParagraph paragraph, String fragment, String href, String color) {
+            references.add(new Reference(link, paragraph, ids.get(fragment), href, color));
+        }
+
+        void finish(List<ConvertWarning> warnings) {
+            for (Reference reference : references) {
+                if (emitted.contains(reference.target())) continue;
+                warnings.add(ConvertWarning.hyperlinkUnresolved(reference.href()));
+                for (CTR ctr : reference.link().getRList()) {
+                    XWPFRun run = new XWPFRun(ctr, reference.paragraph());
+                    run.setUnderline(UnderlinePatterns.NONE);
+                    run.setColor(reference.color() == null ? "auto" : reference.color());
+                }
+                org.w3c.dom.Node link = reference.link().getDomNode();
+                org.w3c.dom.Node parent = link.getParentNode();
+                while (link.hasChildNodes()) parent.insertBefore(link.getFirstChild(), link);
+                parent.removeChild(link);
+            }
+        }
+
+        void mark(XWPFParagraph paragraph, Element element, CTHyperlink hyperlink) {
+            for (Target target : elements.getOrDefault(element, List.of())) {
+                if (!emitted.add(target)) continue;
+                CTBookmark start = hyperlink == null ? paragraph.getCTP().addNewBookmarkStart() : hyperlink.addNewBookmarkStart();
+                start.setId(target.id());
+                start.setName(target.name());
+                CTMarkupRange end = hyperlink == null ? paragraph.getCTP().addNewBookmarkEnd() : hyperlink.addNewBookmarkEnd();
+                end.setId(target.id());
+            }
+        }
+
+        void markBlock(XWPFDocument document, Element element, int firstBodyElement) {
+            if (!elements.containsKey(element) || elements.get(element).stream().allMatch(emitted::contains)) return;
+            for (int i = firstBodyElement; i < document.getBodyElements().size(); i++) {
+                IBodyElement body = document.getBodyElements().get(i);
+                if (body instanceof XWPFParagraph paragraph) {
+                    mark(paragraph, element, null);
+                    return;
+                }
+                if (body instanceof XWPFTable table && !table.getRows().isEmpty() && !table.getRow(0).getTableCells().isEmpty()) {
+                    mark(table.getRow(0).getCell(0).getParagraphs().get(0), element, null);
+                    return;
+                }
+            }
+            mark(document.createParagraph(), element, null);
+        }
+    }
+
     // ── RunState (불변 포맷 상태) ─────────────────────────────────────────────
 
     private static class RunState {
         final UserSettings settings;
+        final Bookmarks bookmarks;
+        CTHyperlink hyperlink;
         boolean bold, italic, strike, code;
         String color;
         Integer headingSize;
 
-        RunState(UserSettings settings) { this.settings = settings; }
+        RunState(UserSettings settings, Bookmarks bookmarks) { this.settings = settings; this.bookmarks = bookmarks; }
 
         RunState withBold(boolean v)   { RunState s = copy(); s.bold = v; return s; }
         RunState withItalic(boolean v) { RunState s = copy(); s.italic = v; return s; }
         RunState withStrike(boolean v) { RunState s = copy(); s.strike = v; return s; }
         RunState withCode(boolean v)   { RunState s = copy(); s.code = v; return s; }
         RunState withColor(String c)   { RunState s = copy(); s.color = c; return s; }
+        RunState withHyperlink(CTHyperlink link) { RunState s = copy(); s.hyperlink = link; return s; }
 
         private RunState copy() {
-            RunState s = new RunState(settings);
+            RunState s = new RunState(settings, bookmarks);
             s.bold = bold; s.italic = italic; s.strike = strike;
             s.code = code; s.color = color;
             s.headingSize = headingSize;
+            s.hyperlink = hyperlink;
             return s;
         }
     }

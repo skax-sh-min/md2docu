@@ -55,4 +55,8 @@ public class ConvertWarning {
     public static ConvertWarning unsupportedResource(String target) {
         return new ConvertWarning("UNSUPPORTED_RESOURCE", target, "지원하지 않는 리소스 주소입니다: " + target);
     }
+
+    public static ConvertWarning hyperlinkUnresolved(String target) {
+        return new ConvertWarning("HYPERLINK_UNRESOLVED", target, "문서 안에서 링크 대상을 찾을 수 없습니다: " + target);
+    }
 }

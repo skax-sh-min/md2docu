@@ -6,6 +6,7 @@ import com.md2docu.model.UserSettings;
 import com.md2docu.util.ImageResolver;
 import com.md2docu.util.ImageResolver.LocalImagePaths;
 import com.md2docu.util.PageLayout;
+import com.md2docu.util.ResourceUri;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import org.jsoup.Jsoup;
 import org.jsoup.helper.W3CDom;
@@ -20,7 +21,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
@@ -115,7 +115,7 @@ public class PdfConverter {
             }
 
             String src = image.attr("src").strip();
-            URI uri = parseUri(src);
+            URI uri = ResourceUri.parse(src);
             String dataUri = null;
             int warningCount = warnings.size();
             if (src.isEmpty()) {
@@ -152,8 +152,8 @@ public class PdfConverter {
             if (!link.hasAttr("href")) continue;
 
             String href = link.attr("href").strip();
-            URI uri = parseUri(href);
-            if (!isAllowedLinkUri(uri)) {
+            URI uri = ResourceUri.parse(href);
+            if (!ResourceUri.isAllowedLink(uri)) {
                 warnings.add(ConvertWarning.unsupportedResource(href));
                 link.tagName("span").removeAttr("href");
             } else if (href.startsWith("#")) {
@@ -166,14 +166,6 @@ public class PdfConverter {
             } else {
                 link.attr("href", href);
             }
-        }
-    }
-
-    private URI parseUri(String value) {
-        try {
-            return new URI(value);
-        } catch (URISyntaxException e) {
-            return null;
         }
     }
 
@@ -190,26 +182,9 @@ public class PdfConverter {
         }
         String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
         if ("http".equals(scheme) || "https".equals(scheme)) {
-            return hasAllowedHost(uri);
+            return ResourceUri.hasAllowedHost(uri);
         }
         return false;
-    }
-
-    private boolean isAllowedLinkUri(URI uri) {
-        if (uri == null) return false;
-        if (uri.getScheme() == null) {
-            return uri.getRawAuthority() == null
-                && ((uri.getPath() != null && !uri.getPath().isEmpty()) || uri.getFragment() != null);
-        }
-        return switch (uri.getScheme().toLowerCase(Locale.ROOT)) {
-            case "http", "https", "ftp" -> hasAllowedHost(uri);
-            case "mailto" -> !uri.getRawSchemeSpecificPart().isBlank();
-            default -> false;
-        };
-    }
-
-    private boolean hasAllowedHost(URI uri) {
-        return uri.getHost() != null && uri.getUserInfo() == null && uri.getPort() <= 65535;
     }
 
     private String wrapHtml(String body, ConvertOptions options, UserSettings s) {

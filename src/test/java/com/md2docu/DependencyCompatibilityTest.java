@@ -789,6 +789,43 @@ class DependencyCompatibilityTest {
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error", containsString("9")));
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"keep", "warn", "ignore"})
+    void preservesLinkedZipImagesFormattingAndOriginalLocalTargets(String strategy) throws Exception {
+        String target = "files/ReadMe%20One.pdf";
+        String markdown = "# Document\n\n[**Before** ![Figure](images/figure.png) *After*](" + target + ")";
+        byte[] image = png();
+        var archive = new MockMultipartFile("file", "Archive.zip", "application/zip", zip(Map.of(
+            "docs/Guide.MD", markdown.getBytes(StandardCharsets.UTF_8), "docs/images/figure.png", image)));
+        var response = response(mvc.perform(multipart("/api/convert/docx").file(archive).param("linkStrategy", strategy))
+            .andExpect(status().isOk()).andReturn());
+        assertThat(response.warnings()).hasSize(strategy.equals("warn") ? 1 : 0);
+        mvc.perform(get("/api/convert/" + response.jobId() + "/warnings")).andExpect(status().isOk())
+            .andExpect(content().json(mapper.writeValueAsString(response.warnings())));
+        try (var doc = new XWPFDocument(new ByteArrayInputStream(download(response, DOCX_CONTENT_TYPE)))) {
+            assertThat(doc.getAllPictures()).singleElement().satisfies(picture ->
+                assertThat(picture.getData()).isEqualTo(image));
+            var paragraph = doc.getParagraphs().get(1);
+            assertThat(paragraph.getText()).contains("Before", "After");
+            assertThat(paragraph.getRuns()).anySatisfy(run -> {
+                assertThat(run.text()).isEqualTo("Before");
+                assertThat(run.isBold()).isTrue();
+            }).anySatisfy(run -> {
+                assertThat(run.text()).isEqualTo("After");
+                assertThat(run.isItalic()).isTrue();
+            });
+            assertThat(paragraph.getCTP().getHyperlinkList()).hasSize(strategy.equals("keep") ? 1 : 0);
+            if (strategy.equals("keep")) {
+                assertThat(doc.getPackagePart().getRelationship(paragraph.getCTP().getHyperlinkArray(0).getId()).getTargetURI().toString())
+                    .isEqualTo(target);
+            } else if (strategy.equals("warn")) {
+                assertThat(response.warnings().get(0)).containsEntry("type", "ATTACHMENT_NOT_FOUND").containsEntry("target", target);
+                assertThat(paragraph.getText()).contains("첨부파일 미포함");
+            }
+        }
+        assertArchiveCleanedUp();
+    }
+
     private ConversionResponse convertText(String format, String markdown) throws Exception {
         return response(mvc.perform(post("/api/convert/" + format + "/text")
                 .contentType(MediaType.APPLICATION_JSON)

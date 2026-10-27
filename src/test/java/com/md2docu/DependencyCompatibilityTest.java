@@ -733,6 +733,62 @@ class DependencyCompatibilityTest {
             .andExpect(jsonPath("$.error").value("Settings could not be saved"));
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"pdf", "docx"})
+    void preservesMixedCaseAndKoreanUploadNamesInTheActualDownload(String format) throws Exception {
+        var file = new MockMultipartFile("file", "C:\\fakepath\\ReadMe_한글.MD", "text/markdown",
+            "# Document".getBytes(StandardCharsets.UTF_8));
+        var response = response(mvc.perform(multipart("/api/convert/" + format).file(file))
+            .andExpect(status().isOk()).andReturn());
+        assertThat(response.fileName()).isEqualTo("ReadMe_한글." + format);
+        String encoded = java.net.URLEncoder.encode(response.fileName(), StandardCharsets.UTF_8).replace("+", "%20");
+        byte[] bytes = mvc.perform(get(response.downloadUrl())).andExpect(status().isOk())
+            .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded))
+            .andReturn().getResponse().getContentAsByteArray();
+        if ("pdf".equals(format)) {
+            try (var document = Loader.loadPDF(bytes)) {
+                assertThat(new PDFTextStripper().getText(document)).contains("Document");
+            }
+        } else {
+            try (var document = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+                assertThat(document.getParagraphs().get(0).getText()).isEqualTo("Document");
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"pdf,IGNORE", "pdf,KEEP", "pdf,WARN", "docx,IGNORE", "docx,KEEP", "docx,WARN"})
+    void appliesUppercaseLinkStrategiesToActualOutput(String format, String strategy) throws Exception {
+        var response = response(mvc.perform(post("/api/convert/" + format + "/text")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsBytes(Map.of("markdown", "[Link](https://example.com)",
+                    "linkStrategy", strategy))))
+            .andExpect(status().isOk()).andReturn());
+        byte[] bytes = mvc.perform(get(response.downloadUrl())).andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsByteArray();
+        long expected = "IGNORE".equals(strategy) ? 0 : 1;
+        if ("pdf".equals(format)) {
+            try (var document = Loader.loadPDF(bytes)) {
+                assertThat(document.getPage(0).getAnnotations().stream().filter(PDAnnotationLink.class::isInstance).count())
+                    .isEqualTo(expected);
+            }
+        } else {
+            try (var document = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+                assertThat(document.getParagraphs().get(0).getRuns().stream()
+                    .filter(org.apache.poi.xwpf.usermodel.XWPFHyperlinkRun.class::isInstance).count()).isEqualTo(expected);
+            }
+        }
+    }
+
+    @Test
+    void reportsUnsupportedDocxListDepthAsAnInputError() throws Exception {
+        String markdown = java.util.stream.IntStream.range(0, 10)
+            .mapToObj(depth -> "    ".repeat(depth) + "- Level " + depth).collect(Collectors.joining("\n"));
+        mvc.perform(post("/api/convert/docx/text").contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsBytes(Map.of("markdown", markdown))))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error", containsString("9")));
+    }
+
     private ConversionResponse convertText(String format, String markdown) throws Exception {
         return response(mvc.perform(post("/api/convert/" + format + "/text")
                 .contentType(MediaType.APPLICATION_JSON)

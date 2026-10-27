@@ -144,7 +144,9 @@ class DocxStructureTest {
         }
         assertThat(roundTrip(convert(valid)).select("ul")).hasSize(9);
         assertThatThrownBy(() -> convert("<ul><li>" + valid + "</li></ul>"))
-            .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("9");
+            .isInstanceOfSatisfying(org.springframework.web.server.ResponseStatusException.class,
+                exception -> assertThat(exception.getStatusCode().value()).isEqualTo(400))
+            .hasMessageContaining("9");
     }
 
     @Test

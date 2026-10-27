@@ -8,6 +8,9 @@ import com.md2docu.util.ImageResolver.LocalImagePaths;
 import org.jsoup.Jsoup;
 import org.jsoup.safety.Safelist;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -23,6 +26,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.time.Instant;
@@ -49,6 +54,7 @@ public class ConvertService {
     private final DocxConverter docxConverter;
     private final DocxToMarkdownConverter docxToMarkdownConverter;
     private final ZipExtractor zipExtractor;
+    private final HttpClient httpClient;
 
     @Value("${app.convert.temp-expiry-seconds:3600}")
     private long tempExpirySeconds;
@@ -58,26 +64,34 @@ public class ConvertService {
     // jobId → (result, createdAt)
     private final Map<String, StoredResult> store = new ConcurrentHashMap<>();
 
+    @Autowired
     public ConvertService(MarkdownService markdownService, PdfConverter pdfConverter,
                           DocxConverter docxConverter, DocxToMarkdownConverter docxToMarkdownConverter,
                           ZipExtractor zipExtractor) {
+        this(markdownService, pdfConverter, docxConverter, docxToMarkdownConverter, zipExtractor, HTTP_CLIENT);
+    }
+
+    ConvertService(MarkdownService markdownService, PdfConverter pdfConverter,
+                   DocxConverter docxConverter, DocxToMarkdownConverter docxToMarkdownConverter,
+                   ZipExtractor zipExtractor, HttpClient httpClient) {
         this.markdownService = markdownService;
         this.pdfConverter = pdfConverter;
         this.docxConverter = docxConverter;
         this.docxToMarkdownConverter = docxToMarkdownConverter;
         this.zipExtractor = zipExtractor;
+        this.httpClient = httpClient;
     }
 
     // ── 파일 업로드 변환 ──────────────────────────────────────────────────────
 
     public ConvertResult convertFile(MultipartFile file, String format, ConvertOptions options) throws IOException {
-        String name = file.getOriginalFilename() != null ? file.getOriginalFilename().toLowerCase() : "";
+        String name = uploadName(file, ".md", ".zip");
         byte[] bytes = file.getBytes();
 
-        if (name.endsWith(".zip")) {
+        if (name.toLowerCase(Locale.ROOT).endsWith(".zip")) {
             return convertZip(bytes, format, options);
         }
-        String markdown = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        String markdown = decodeMarkdown(bytes);
         return convertMarkdown(markdown, format, options, null, baseName(name));
     }
 
@@ -90,13 +104,7 @@ public class ConvertService {
     // ── DOCX → Markdown 변환 ─────────────────────────────────────────────────
 
     public ConvertResult convertDocxToMd(MultipartFile file, boolean splitByChapter) throws IOException {
-        String raw  = file.getOriginalFilename() != null ? file.getOriginalFilename() : "document.docx";
-        int    sep  = Math.max(raw.lastIndexOf('/'), raw.lastIndexOf('\\'));
-        String name = sep >= 0 ? raw.substring(sep + 1) : raw;
-        if (name.isEmpty()) name = "document.docx";
-        if (!name.toLowerCase().endsWith(".docx")) {
-            throw new IOException("지원하지 않는 파일 형식입니다. .docx 파일만 지원합니다.");
-        }
+        String name = uploadName(file, ".docx");
         List<ConvertWarning> warnings = new ArrayList<>();
         DocxToMarkdownConverter.Output output = docxToMarkdownConverter.convert(file.getBytes(), warnings);
 
@@ -132,22 +140,24 @@ public class ConvertService {
     // ── URL 변환 ──────────────────────────────────────────────────────────────
 
     public ConvertResult convertUrl(String url, String format, ConvertOptions options) throws IOException {
+        url = url == null ? "" : url.trim();
         validateUrl(url);
         String rawUrl = resolveRawUrl(url);
         if (!rawUrl.equals(url)) validateUrl(rawUrl);
+        String path      = URI.create(rawUrl).getPath();
+        String lowerPath = path.toLowerCase(Locale.ROOT);
+        if (!lowerPath.endsWith(".md") && !lowerPath.endsWith(".zip")) {
+            throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                "지원하지 않는 파일 형식입니다. .md 또는 .zip URL만 허용합니다.");
+        }
         byte[] content = downloadFromUrl(rawUrl);
         requireNotHtml(content);
-        String path      = URI.create(rawUrl).getPath();
-        String lowerPath = path.toLowerCase();
-        if (!lowerPath.endsWith(".md") && !lowerPath.endsWith(".zip")) {
-            throw new IOException("지원하지 않는 파일 형식입니다. .md 또는 .zip URL만 허용합니다.");
-        }
         String fname = path.substring(Math.max(path.lastIndexOf('/') + 1, 0));
         String base  = fname.isEmpty() ? "document" : baseName(fname);
         if (lowerPath.endsWith(".zip")) {
             return convertZip(content, format, options);
         }
-        String markdown = new String(content, StandardCharsets.UTF_8);
+        String markdown = decodeMarkdown(content);
         return convertMarkdown(markdown, format, options, null, base, rawUrl);
     }
 
@@ -179,51 +189,54 @@ public class ConvertService {
 
     private void requireNotHtml(byte[] content) throws IOException {
         int len = Math.min(content.length, 512);
-        String preview = new String(content, 0, len, StandardCharsets.UTF_8).stripLeading().toLowerCase();
+        String preview = new String(content, 0, len, StandardCharsets.UTF_8)
+            .replaceFirst("^\uFEFF", "").stripLeading().toLowerCase(Locale.ROOT);
         if (preview.startsWith("<!doctype") || preview.startsWith("<html")) {
-            throw new IOException(
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "다운로드한 내용이 HTML 페이지입니다. "
                 + "GitHub/GitLab 파일 링크를 사용하거나 Raw URL을 직접 입력해 주세요.");
         }
     }
 
-    private void validateUrl(String url) throws IOException {
-        if (url == null || url.isBlank()) throw new IOException("URL을 입력해 주세요.");
-        String lower = url.toLowerCase();
+    private void validateUrl(String url) {
+        if (url == null || url.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "URL을 입력해 주세요.");
+        String lower = url.toLowerCase(Locale.ROOT);
         if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
-            throw new IOException("http:// 또는 https:// URL만 허용합니다.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "http:// 또는 https:// URL만 허용합니다.");
         }
         try {
             URI parsed = URI.create(url);
-            if (parsed.getUserInfo() != null) throw new IOException("URL에 자격 증명(userinfo)을 포함할 수 없습니다.");
+            if (parsed.getUserInfo() != null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "URL에 자격 증명(userinfo)을 포함할 수 없습니다.");
             String host = parsed.getHost();
-            if (host == null || host.isBlank()) throw new IOException("유효하지 않은 URL입니다.");
+            if (host == null || host.isBlank() || parsed.getPort() > 65535) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "유효하지 않은 URL입니다.");
+            }
             // IPv6 brackets: [::1] → ::1
             String bareHost = host.startsWith("[") && host.endsWith("]")
                 ? host.substring(1, host.length() - 1) : host;
             // Fast-fail: obvious internal hostnames/IP patterns before DNS lookup
-            if (isInternalHost(bareHost.toLowerCase())) {
-                throw new IOException("내부 네트워크 주소는 허용되지 않습니다.");
+            if (isInternalHost(bareHost.toLowerCase(Locale.ROOT))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "내부 네트워크 주소는 허용되지 않습니다.");
             }
             // Resolve DNS and verify every returned address (blocks nip.io-style and IPv6 SSRF)
             InetAddress[] addresses;
             try {
                 addresses = InetAddress.getAllByName(bareHost);
             } catch (UnknownHostException e) {
-                throw new IOException("호스트를 찾을 수 없습니다: " + bareHost);
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "호스트를 찾을 수 없습니다: " + bareHost, e);
             }
             for (InetAddress addr : addresses) {
                 if (addr.isLoopbackAddress() || addr.isSiteLocalAddress()
                         || addr.isLinkLocalAddress() || addr.isAnyLocalAddress()
                         || addr.isMulticastAddress()) {
-                    throw new IOException("내부 네트워크 주소는 허용되지 않습니다.");
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "내부 네트워크 주소는 허용되지 않습니다.");
                 }
                 if (addr instanceof java.net.Inet6Address && isBlockedInet6(addr.getAddress())) {
-                    throw new IOException("내부 네트워크 주소는 허용되지 않습니다.");
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "내부 네트워크 주소는 허용되지 않습니다.");
                 }
             }
         } catch (IllegalArgumentException e) {
-            throw new IOException("유효하지 않은 URL입니다: " + e.getMessage());
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "유효하지 않은 URL입니다.", e);
         }
     }
 
@@ -261,32 +274,34 @@ public class ConvertService {
             .GET()
             .build();
         try {
-            HttpResponse<InputStream> response = HTTP_CLIENT.send(request,
+            HttpResponse<InputStream> response = httpClient.send(request,
                 HttpResponse.BodyHandlers.ofInputStream());
             int status = response.statusCode();
             if (status >= 300 && status < 400) {
                 try (InputStream ignored = response.body()) { /* drain */ }
-                throw new IOException(
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
                     "URL이 리다이렉트됩니다 (HTTP " + status + "). "
                     + "GitHub/GitLab 파일 링크를 사용하거나 Raw URL을 직접 입력해 주세요.");
             }
             if (status < 200 || status >= 300) {
                 try (InputStream ignored = response.body()) { /* drain */ }
-                throw new IOException("다운로드 실패: HTTP " + status);
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "다운로드 실패: HTTP " + status);
             }
             try (InputStream is = response.body()) {
                 byte[] buf = is.readNBytes((int) MAX_DOWNLOAD_BYTES + 1);
                 if (buf.length > MAX_DOWNLOAD_BYTES) {
-                    throw new IOException("파일 크기가 최대 허용량("
+                    throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "파일 크기가 최대 허용량("
                         + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + "MB)을 초과했습니다.");
                 }
                 return buf;
             }
         } catch (java.net.http.HttpTimeoutException e) {
-            throw new IOException("URL 다운로드 시간이 초과되었습니다 (15초).");
+            throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "URL 다운로드 시간이 초과되었습니다 (15초).", e);
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "URL 다운로드 중 통신 오류가 발생했습니다.", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("다운로드가 중단되었습니다.");
+            throw new IOException("다운로드가 중단되었습니다.", e);
         }
     }
 
@@ -374,8 +389,8 @@ public class ConvertService {
         Path mdFile = extraction.mainMdFile();
 
         try {
-            if (mdFile == null) throw new IOException("ZIP 파일 안에 .md 파일이 없습니다.");
-            String markdown = Files.readString(mdFile);
+            if (mdFile == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "ZIP 파일 안에 .md 파일이 없습니다.");
+            String markdown = decodeMarkdown(Files.readAllBytes(mdFile));
             LocalImagePaths imagePaths = new LocalImagePaths(basePath, mdFile.getParent());
             return convertMarkdown(markdown, format, options, imagePaths, baseName(mdFile.getFileName().toString()));
         } finally {
@@ -393,6 +408,10 @@ public class ConvertService {
     private ConvertResult convertMarkdown(String markdown, String format,
                                          ConvertOptions options, LocalImagePaths imagePaths, String baseName,
                                          String baseUrl) throws IOException {
+        if (markdown != null && markdown.startsWith("\uFEFF")) markdown = markdown.substring(1);
+        if (markdown == null || markdown.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "변환할 Markdown 내용을 입력해 주세요.");
+        }
         List<ConvertWarning> warnings = new ArrayList<>();
         String html = markdownService.toHtml(markdown, options.isGenerateToc(), options.isNumberHeadings());
         if (baseUrl != null) {
@@ -445,7 +464,7 @@ public class ConvertService {
 
     public List<ConvertWarning> getWarnings(String jobId) {
         StoredResult stored = store.get(jobId);
-        return stored != null ? stored.result().getWarnings() : List.of();
+        return stored != null ? stored.result().getWarnings() : null;
     }
 
     // ── 미리보기 ─────────────────────────────────────────────────────────────
@@ -470,7 +489,31 @@ public class ConvertService {
 
     private String baseName(String fileName) {
         int dot = fileName.lastIndexOf('.');
-        return dot > 0 ? fileName.substring(0, dot) : fileName;
+        String base = (dot > 0 ? fileName.substring(0, dot) : fileName)
+            .replaceAll("[\\p{Cntrl}/\\\\:*?\"<>|]", "").trim();
+        return base.isEmpty() ? "document" : base;
+    }
+
+    private String uploadName(MultipartFile file, String... extensions) {
+        if (file.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "빈 파일은 변환할 수 없습니다.");
+        String raw = file.getOriginalFilename();
+        if (raw == null || raw.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "파일 이름이 필요합니다.");
+        int separator = Math.max(raw.lastIndexOf('/'), raw.lastIndexOf('\\'));
+        String name = raw.substring(separator + 1);
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (Arrays.stream(extensions).noneMatch(lower::endsWith)) {
+            throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                "지원하지 않는 파일 형식입니다. " + String.join(", ", extensions) + " 파일만 지원합니다.");
+        }
+        return name;
+    }
+
+    private String decodeMarkdown(byte[] content) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(content)).toString();
+        } catch (CharacterCodingException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Markdown 파일은 올바른 UTF-8 텍스트여야 합니다.", e);
+        }
     }
 
     private record StoredResult(ConvertResult result, Instant createdAt) {}

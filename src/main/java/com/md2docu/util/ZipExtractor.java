@@ -2,9 +2,12 @@ package com.md2docu.util;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.EOFException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -12,10 +15,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import java.util.zip.ZipException;
 
 @Component
 public class ZipExtractor {
@@ -28,7 +33,12 @@ public class ZipExtractor {
     public record ExtractionResult(Path baseDir, Path mainMdFile) {}
 
     public ExtractionResult extract(byte[] zipBytes) throws IOException {
+        if (zipBytes.length < 4 || zipBytes[0] != 'P' || zipBytes[1] != 'K'
+                || !((zipBytes[2] == 3 && zipBytes[3] == 4) || (zipBytes[2] == 5 && zipBytes[3] == 6))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "유효한 ZIP 파일이 아닙니다.");
+        }
         Path tempDir = Files.createTempDirectory("md2docu-");
+        boolean completed = false;
         try {
             try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
                 ZipEntry entry;
@@ -51,10 +61,12 @@ public class ZipExtractor {
                 }
             }
             Path mainMd = findMainMdFile(tempDir);
+            completed = true;
             return new ExtractionResult(tempDir, mainMd);
-        } catch (IOException e) {
-            cleanup(tempDir);
-            throw e;
+        } catch (ZipException | EOFException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "ZIP 파일이 손상되었습니다.", e);
+        } finally {
+            if (!completed) cleanup(tempDir);
         }
     }
 
@@ -66,7 +78,7 @@ public class ZipExtractor {
             while ((n = zis.read(chunk)) != -1) {
                 written += n;
                 if (written > remaining) {
-                    throw new IOException(
+                    throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
                         "ZIP 압축 해제 크기가 최대 허용량(" + (maxExtractBytes / 1024 / 1024) + "MB)을 초과했습니다.");
                 }
                 out.write(chunk, 0, n);
@@ -78,7 +90,7 @@ public class ZipExtractor {
     private Path findMainMdFile(Path dir) throws IOException {
         List<Path> mdFiles = new ArrayList<>();
         try (Stream<Path> stream = Files.walk(dir)) {
-            stream.filter(p -> p.toString().toLowerCase().endsWith(".md"))
+            stream.filter(p -> Files.isRegularFile(p) && p.toString().toLowerCase(Locale.ROOT).endsWith(".md"))
                   .forEach(mdFiles::add);
         }
         if (mdFiles.isEmpty()) return null;

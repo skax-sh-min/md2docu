@@ -3,6 +3,8 @@ package com.md2docu.service;
 import com.md2docu.model.ConvertOptions;
 import com.md2docu.model.ConvertWarning;
 import com.md2docu.model.UserSettings;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import com.md2docu.util.ImageResolver;
 import com.md2docu.util.ImageResolver.LocalImagePaths;
 import com.md2docu.util.ImageResolver.ResolvedImage;
@@ -241,7 +243,7 @@ public class DocxConverter {
 
     private void addList(XWPFDocument doc, Element listEl, boolean ordered, int depth,
                          ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, UserSettings settings) {
-        if (depth > 9) throw new IllegalArgumentException("DOCX lists support at most 9 levels");
+        if (depth > 9) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "DOCX 목록은 최대 9단계까지 지원합니다.");
         BigInteger start = ordered && listEl.hasAttr("start")
             ? new BigInteger(listEl.attr("start")) : BigInteger.ONE;
         BigInteger numId = createListNumbering(doc, ordered, depth, start);

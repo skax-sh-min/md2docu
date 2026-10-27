@@ -402,6 +402,13 @@ System.out.println("Hello, md2docu!");
 
   function handleFile(file) {
     if (!file) return;
+    if (!/\.(md|zip)$/i.test(file.name) || file.size === 0) {
+      selectedFile = null;
+      fileInput.value = '';
+      document.getElementById('file-info').classList.add('d-none');
+      showError('내용이 있는 .md 또는 .zip 파일을 선택해 주세요.');
+      return;
+    }
     selectedFile = file;
     const info = document.getElementById('file-info');
     info.textContent = `📄 ${file.name}  (${(file.size / 1024).toFixed(1)} KB)`;
@@ -425,8 +432,11 @@ System.out.println("Hello, md2docu!");
 
   function handleDocxFile(file) {
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.docx')) {
-      alert('.docx 파일만 업로드할 수 있습니다.');
+    if (!file.name.toLowerCase().endsWith('.docx') || file.size === 0) {
+      selectedDocxFile = null;
+      fileInputDocx.value = '';
+      document.getElementById('file-info-docx').classList.add('d-none');
+      showError('내용이 있는 .docx 파일을 선택해 주세요.');
       return;
     }
     selectedDocxFile = file;
@@ -443,14 +453,15 @@ System.out.println("Hello, md2docu!");
     const markdown    = document.getElementById('editor').value;
     const numbering   = document.getElementById('opt-numbering').checked;
     try {
-      const res = await fetch('/api/preview', {
+      const data = await conversionJson('/api/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ markdown, numberHeadings: numbering })
       });
-      const data = await res.json();
       document.getElementById('preview-pane').innerHTML = data.html;
-    } catch (e) { /* 무시 */ }
+    } catch (e) {
+      document.getElementById('preview-pane').textContent = '미리보기 오류: ' + e.message;
+    }
   }
 
   // 초기 미리보기
@@ -478,31 +489,25 @@ System.out.println("Hello, md2docu!");
       if (activeTab === 'url') {
         const url = document.getElementById('url-input').value.trim();
         if (!url) { alert('URL을 입력해 주세요.'); setLoading(false); return; }
-        const res = await fetch(`/api/convert/${format}/url`, {
+        data = await conversionJson(`/api/convert/${format}/url`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url, pageSize, linkStrategy: link, includeImages: images, numberHeadings: numbering, generateToc: toc })
         });
-        data = await res.json();
-        if (!res.ok) throw new Error(data.error || '변환 오류');
       } else if (activeTab === 'docx2md') {
         if (!selectedDocxFile) { alert('.docx 파일을 선택해 주세요.'); setLoading(false); return; }
         const splitByChapter = document.getElementById('opt-split-chapter').checked;
         const form = new FormData();
         form.append('file', selectedDocxFile);
         form.append('splitByChapter', splitByChapter);
-        const res = await fetch('/api/convert/md', { method: 'POST', body: form });
-        data = await res.json();
-        if (!res.ok) throw new Error(data.error || '변환 오류');
+        data = await conversionJson('/api/convert/md', { method: 'POST', body: form });
       } else if (activeTab === 'editor') {
         const markdown = document.getElementById('editor').value;
-        const res = await fetch(`/api/convert/${format}/text`, {
+        data = await conversionJson(`/api/convert/${format}/text`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ markdown, pageSize, linkStrategy: link, includeImages: images, numberHeadings: numbering, generateToc: toc })
         });
-        data = await res.json();
-        if (!res.ok) throw new Error(data.error || '변환 오류');
       } else {
         if (!selectedFile) { alert('파일을 선택해 주세요.'); setLoading(false); return; }
         const form = new FormData();
@@ -512,9 +517,7 @@ System.out.println("Hello, md2docu!");
         form.append('includeImages', images);
         form.append('numberHeadings', numbering);
         form.append('generateToc', toc);
-        const res = await fetch(`/api/convert/${format}`, { method: 'POST', body: form });
-        data = await res.json();
-        if (!res.ok) throw new Error(data.error || '변환 오류');
+        data = await conversionJson(`/api/convert/${format}`, { method: 'POST', body: form });
       }
 
       showResult(data);
@@ -524,6 +527,18 @@ System.out.println("Hello, md2docu!");
       setLoading(false);
     }
   });
+
+  async function conversionJson(url, options) {
+    const response = await fetch(url, options);
+    let data;
+    try {
+      data = await response.json();
+    } catch (e) {
+      throw new Error('서버 응답이 올바른 JSON이 아닙니다 (HTTP ' + response.status + ').');
+    }
+    if (!response.ok) throw new Error(data.error || '요청 실패 (HTTP ' + response.status + ')');
+    return data;
+  }
 
   function showResult(data) {
     // 자동 다운로드

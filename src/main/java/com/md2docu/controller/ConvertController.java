@@ -1,10 +1,10 @@
 package com.md2docu.controller;
 
-import com.md2docu.model.ConvertOptions;
+import com.md2docu.model.ConversionRequest;
 import com.md2docu.model.ConvertResult;
 import com.md2docu.model.ConvertWarning;
 import com.md2docu.service.ConvertService;
-import com.md2docu.util.PageLayout;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -12,43 +12,21 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.Locale;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api")
 public class ConvertController {
 
-    private static final Set<String> VALID_FORMATS = Set.of("pdf", "docx");
-    private static final Set<String> VALID_PAGE_SIZES = Set.of("A4", "LETTER");
-    private static final Set<String> VALID_LINK_STRATEGIES = Set.of("keep", "warn", "ignore");
-
     private final ConvertService convertService;
 
     public ConvertController(ConvertService convertService) {
         this.convertService = convertService;
-    }
-
-    private void requireValidFormat(String format) throws IOException {
-        if (!VALID_FORMATS.contains(format.toLowerCase())) {
-            throw new IOException("지원하지 않는 변환 형식입니다: " + format + " (지원: pdf, docx)");
-        }
-    }
-
-    private void requireValidPageSize(String pageSize) throws IOException {
-        if (!VALID_PAGE_SIZES.contains(pageSize.toUpperCase())) {
-            throw new IOException("지원하지 않는 페이지 크기입니다: " + pageSize + " (지원: A4, LETTER)");
-        }
-    }
-
-    private void requireValidLinkStrategy(String strategy) throws IOException {
-        if (!VALID_LINK_STRATEGIES.contains(strategy.toLowerCase())) {
-            throw new IOException("지원하지 않는 링크 전략입니다: " + strategy + " (지원: keep, warn, ignore)");
-        }
     }
 
     /**
@@ -59,18 +37,17 @@ public class ConvertController {
     public ResponseEntity<Map<String, Object>> convertFile(
             @PathVariable String format,
             @RequestParam("file") MultipartFile file,
-            @RequestParam(defaultValue = "A4") String pageSize,
-            @RequestParam(defaultValue = "true") boolean includeImages,
-            @RequestParam(defaultValue = "keep") String linkStrategy,
-            @RequestParam(defaultValue = "5000") int remoteImageTimeout,
-            @RequestParam(defaultValue = "false") boolean generateToc,
-            @RequestParam(defaultValue = "false") boolean numberHeadings) throws IOException {
+            @RequestParam(required = false) String pageSize,
+            @RequestParam(required = false) String includeImages,
+            @RequestParam(required = false) String linkStrategy,
+            @RequestParam(required = false) String remoteImageTimeout,
+            @RequestParam(required = false) String generateToc,
+            @RequestParam(required = false) String numberHeadings) throws IOException {
 
-        requireValidFormat(format);
-        requireValidPageSize(pageSize);
-        requireValidLinkStrategy(linkStrategy);
-        ConvertOptions options = buildOptions(pageSize, includeImages, linkStrategy, remoteImageTimeout, generateToc, numberHeadings);
-        ConvertResult result = convertService.convertFile(file, format, options);
+        String normalizedFormat = ConversionRequest.format(format);
+        var options = ConversionRequest.formOptions(
+            pageSize, includeImages, linkStrategy, remoteImageTimeout, generateToc, numberHeadings);
+        ConvertResult result = convertService.convertFile(file, normalizedFormat, options);
 
         return ResponseEntity.ok(toResponseMap(result));
     }
@@ -82,26 +59,10 @@ public class ConvertController {
     @PostMapping("/convert/{format}/text")
     public ResponseEntity<Map<String, Object>> convertText(
             @PathVariable String format,
-            @RequestBody Map<String, Object> body) throws IOException {
+            @RequestBody ConversionRequest body) throws IOException {
 
-        requireValidFormat(format);
-        String markdown = getStringOrDefault(body, "markdown", "");
-        ConvertOptions options = new ConvertOptions();
-        if (body.containsKey("pageSize")) {
-            String pageSize = requireString(body, "pageSize");
-            requireValidPageSize(pageSize);
-            options.setPageSize(pageSize);
-        }
-        if (body.containsKey("includeImages"))     options.setIncludeImages(requireBoolean(body, "includeImages"));
-        if (body.containsKey("linkStrategy")) {
-            String linkStrategy = requireString(body, "linkStrategy");
-            requireValidLinkStrategy(linkStrategy);
-            options.setLinkStrategy(linkStrategy);
-        }
-        if (body.containsKey("generateToc"))       options.setGenerateToc(requireBoolean(body, "generateToc"));
-        if (body.containsKey("numberHeadings"))    options.setNumberHeadings(requireBoolean(body, "numberHeadings"));
-
-        ConvertResult result = convertService.convertText(markdown, format, options);
+        String normalizedFormat = ConversionRequest.format(format);
+        ConvertResult result = convertService.convertText(body.markdownText(), normalizedFormat, body.options());
 
         return ResponseEntity.ok(toResponseMap(result));
     }
@@ -113,26 +74,10 @@ public class ConvertController {
     @PostMapping("/convert/{format}/url")
     public ResponseEntity<Map<String, Object>> convertUrl(
             @PathVariable String format,
-            @RequestBody Map<String, Object> body) throws IOException {
+            @RequestBody ConversionRequest body) throws IOException {
 
-        requireValidFormat(format);
-        String url = getStringOrDefault(body, "url", "");
-        ConvertOptions options = new ConvertOptions();
-        if (body.containsKey("pageSize")) {
-            String pageSize = requireString(body, "pageSize");
-            requireValidPageSize(pageSize);
-            options.setPageSize(pageSize);
-        }
-        if (body.containsKey("includeImages"))   options.setIncludeImages(requireBoolean(body, "includeImages"));
-        if (body.containsKey("linkStrategy")) {
-            String linkStrategy = requireString(body, "linkStrategy");
-            requireValidLinkStrategy(linkStrategy);
-            options.setLinkStrategy(linkStrategy);
-        }
-        if (body.containsKey("generateToc"))     options.setGenerateToc(requireBoolean(body, "generateToc"));
-        if (body.containsKey("numberHeadings"))  options.setNumberHeadings(requireBoolean(body, "numberHeadings"));
-
-        ConvertResult result = convertService.convertUrl(url, format, options);
+        String normalizedFormat = ConversionRequest.format(format);
+        ConvertResult result = convertService.convertUrl(body.sourceUrl(), normalizedFormat, body.options());
         return ResponseEntity.ok(toResponseMap(result));
     }
 
@@ -144,7 +89,7 @@ public class ConvertController {
     public ResponseEntity<byte[]> download(@PathVariable String jobId) {
         ConvertResult result = convertService.getResult(jobId);
         if (result == null) {
-            return ResponseEntity.notFound().build();
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "변환 결과를 찾을 수 없습니다.");
         }
 
         String encodedName = URLEncoder.encode(result.getFileName(), StandardCharsets.UTF_8)
@@ -162,7 +107,7 @@ public class ConvertController {
      */
     @GetMapping("/system/info")
     public ResponseEntity<Map<String, Object>> systemInfo() {
-        String os = System.getProperty("os.name", "").toLowerCase();
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         boolean pdfKoreanWarning = !os.contains("win");
         return ResponseEntity.ok(Map.of("pdfKoreanWarning", pdfKoreanWarning));
     }
@@ -174,8 +119,9 @@ public class ConvertController {
     @PostMapping("/convert/md")
     public ResponseEntity<Map<String, Object>> convertToMarkdown(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "splitByChapter", defaultValue = "false") boolean splitByChapter) throws IOException {
-        ConvertResult result = convertService.convertDocxToMd(file, splitByChapter);
+            @RequestParam(required = false) String splitByChapter) throws IOException {
+        boolean split = Boolean.TRUE.equals(ConversionRequest.formBoolean(splitByChapter, "splitByChapter"));
+        ConvertResult result = convertService.convertDocxToMd(file, split);
         return ResponseEntity.ok(toResponseMap(result));
     }
 
@@ -184,10 +130,8 @@ public class ConvertController {
      * POST /api/preview
      */
     @PostMapping("/preview")
-    public ResponseEntity<Map<String, String>> preview(@RequestBody Map<String, Object> body) throws IOException {
-        String markdown = getStringOrDefault(body, "markdown", "");
-        boolean numberHeadings = Boolean.TRUE.equals(body.get("numberHeadings"));
-        String html = convertService.preview(markdown, numberHeadings);
+    public ResponseEntity<Map<String, String>> preview(@RequestBody ConversionRequest body) {
+        String html = convertService.preview(body.markdownText(), body.previewNumbering());
         return ResponseEntity.ok(Map.of("html", html));
     }
 
@@ -198,44 +142,8 @@ public class ConvertController {
     @GetMapping("/convert/{jobId}/warnings")
     public ResponseEntity<List<ConvertWarning>> warnings(@PathVariable String jobId) {
         List<ConvertWarning> warnings = convertService.getWarnings(jobId);
-        if (warnings == null) return ResponseEntity.notFound().build();
+        if (warnings == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "변환 결과를 찾을 수 없습니다.");
         return ResponseEntity.ok(warnings);
-    }
-
-    @ExceptionHandler(IOException.class)
-    public ResponseEntity<Map<String, String>> handleIoException(IOException e) {
-        return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-    }
-
-    @ExceptionHandler(UncheckedIOException.class)
-    public ResponseEntity<Map<String, String>> handleUncheckedIoException(UncheckedIOException e) {
-        return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
-    }
-
-    @ExceptionHandler(PageLayout.InvalidLayoutException.class)
-    public ResponseEntity<Map<String, String>> handleInvalidLayout(PageLayout.InvalidLayoutException e) {
-        return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-    }
-
-    private String requireString(Map<String, Object> body, String key) throws IOException {
-        Object val = body.get(key);
-        if (!(val instanceof String)) {
-            throw new IOException("'" + key + "' 필드는 문자열 타입이어야 합니다.");
-        }
-        return (String) val;
-    }
-
-    private String getStringOrDefault(Map<String, Object> body, String key, String defaultValue) throws IOException {
-        if (!body.containsKey(key)) return defaultValue;
-        return requireString(body, key);
-    }
-
-    private boolean requireBoolean(Map<String, Object> body, String key) throws IOException {
-        Object val = body.get(key);
-        if (!(val instanceof Boolean)) {
-            throw new IOException("'" + key + "' 필드는 boolean 타입이어야 합니다.");
-        }
-        return (Boolean) val;
     }
 
     private Map<String, Object> toResponseMap(ConvertResult r) {
@@ -247,15 +155,4 @@ public class ConvertController {
         );
     }
 
-    private ConvertOptions buildOptions(String pageSize, boolean includeImages, String linkStrategy,
-                                        int remoteImageTimeout, boolean generateToc, boolean numberHeadings) {
-        ConvertOptions opts = new ConvertOptions();
-        opts.setPageSize(pageSize);
-        opts.setIncludeImages(includeImages);
-        opts.setLinkStrategy(linkStrategy);
-        opts.setRemoteImageTimeout(Math.max(1_000, Math.min(30_000, remoteImageTimeout)));
-        opts.setGenerateToc(generateToc);
-        opts.setNumberHeadings(numberHeadings);
-        return opts;
-    }
 }

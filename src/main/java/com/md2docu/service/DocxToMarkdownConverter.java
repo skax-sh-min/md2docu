@@ -10,6 +10,10 @@ import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTR;
 import org.jsoup.parser.Parser;
 import org.w3c.dom.Node;
 import org.springframework.stereotype.Service;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
+import org.apache.poi.ooxml.POIXMLException;
+import org.apache.poi.openxml4j.exceptions.OpenXML4JRuntimeException;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -52,7 +56,7 @@ public class DocxToMarkdownConverter {
     public Output convert(byte[] docxBytes, List<ConvertWarning> warnings) throws IOException {
         ConvertContext ctx = new ConvertContext(warnings, new LinkedHashMap<>(), new IdentityHashMap<>(),
             new ListState());
-        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(docxBytes))) {
+        try (XWPFDocument doc = openDocument(docxBytes)) {
             StringBuilder sb = new StringBuilder();
             for (IBodyElement el : doc.getBodyElements()) {
                 if (el instanceof XWPFParagraph para) {
@@ -66,9 +70,18 @@ public class DocxToMarkdownConverter {
                         endList(sb, ctx);
                         sb.append(escapeText(control.getContent().getText())).append("\n\n");
                     }
+
                 }
             }
             return new Output(sb.toString().stripTrailing() + "\n", ctx.images());
+        }
+    }
+
+    private XWPFDocument openDocument(byte[] bytes) {
+        try {
+            return new XWPFDocument(new ByteArrayInputStream(bytes));
+        } catch (IOException | POIXMLException | OpenXML4JRuntimeException | IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "DOCX 파일이 손상되었거나 올바른 Word 문서가 아닙니다.", e);
         }
     }
 

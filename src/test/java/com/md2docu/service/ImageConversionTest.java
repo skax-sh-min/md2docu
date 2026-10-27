@@ -145,7 +145,7 @@ class ImageConversionTest {
         narrowPage(pageSize);
         String src = TestImages.dataUri(TestImages.raster("png", 2400, 600));
         double pageWidth = "LETTER".equals(pageSize) ? 612 : 595.3;
-        double bodyWidth = pageWidth - 160 * 72.0 / 25.4;
+        double bodyWidth = pageWidth - 30 * 72.0 / 25.4;
         try (var document = docx("<p><img src='" + src + "'></p>")) {
             Rectangle2D image = extent(document.getParagraphs().get(0));
             assertThat(image.getWidth()).isLessThanOrEqualTo(bodyWidth + 1);
@@ -175,7 +175,7 @@ class ImageConversionTest {
     @ValueSource(strings = {"A4", "LETTER"})
     void constrainsTallImagesToThePageBodyHeightWithoutDistortingThem(String pageSize) throws Exception {
         narrowPage(pageSize);
-        double bodyHeight = ("LETTER".equals(pageSize) ? 792 : 841.9) - 200 * 72.0 / 25.4;
+        double bodyHeight = ("LETTER".equals(pageSize) ? 792 : 841.9) - 28 * 72.0 / 25.4;
         String html = "<p><img src='" + TestImages.dataUri(TestImages.raster("png", 600, 2400)) + "'></p>";
         try (var document = docx(html)) {
             var image = extent(document.getParagraphs().get(0));
@@ -194,9 +194,10 @@ class ImageConversionTest {
     void subtractsListIndentationAndKeepsThinImagesNonzero() throws Exception {
         narrowPage("LETTER");
         String src = TestImages.dataUri(TestImages.raster("png", 2400, 600));
-        try (var document = docx("<ul><li><img src='" + src + "'></li></ul>")) {
-            var p = document.getParagraphs().get(0);
-            assertThat(extent(p).getWidth()).isLessThanOrEqualTo(612 - 160 * 72.0 / 25.4
+        try (var document = docx("<ul><li><ul><li><ul><li><ul><li><ul><li><img src='" + src
+                + "'></li></ul></li></ul></li></ul></li></ul></li></ul>")) {
+            var p = document.getParagraphs().get(4);
+            assertThat(extent(p).getWidth()).isLessThanOrEqualTo(612 - 30 * 72.0 / 25.4
                 - p.getIndentationLeft() / 20.0 + 1);
         }
         String thin = TestImages.dataUri(TestImages.raster("png", 1, 2000));
@@ -220,10 +221,10 @@ class ImageConversionTest {
 
     private void narrowPage(String pageSize) {
         options.setPageSize(pageSize);
-        settings.setMarginLeftMm(80);
-        settings.setMarginRightMm(80);
-        settings.setMarginTopMm(100);
-        settings.setMarginBottomMm(100);
+        settings.setMarginLeftMm(15);
+        settings.setMarginRightMm(15);
+        settings.setMarginTopMm(14);
+        settings.setMarginBottomMm(14);
     }
 
     private XWPFDocument docx(String html) throws IOException {

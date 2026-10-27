@@ -6,6 +6,7 @@ import com.md2docu.model.UserSettings;
 import com.md2docu.util.ImageResolver;
 import com.md2docu.util.ImageResolver.LocalImagePaths;
 import com.md2docu.util.ImageResolver.ResolvedImage;
+import com.md2docu.util.PageLayout;
 import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
 import org.apache.poi.util.Units;
 import org.apache.poi.xwpf.usermodel.*;
@@ -40,12 +41,14 @@ public class DocxConverter {
     }
 
     public byte[] convert(String html, ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) throws IOException {
+        UserSettings snapshot = new UserSettings(settingsService.get());
+        PageLayout.validate(options.getPageSize(), snapshot);
         try (XWPFDocument doc = new XWPFDocument()) {
-            setupDefaultStyles(doc, options);
+            setupDefaultStyles(doc, options, snapshot);
 
             int[] bkId = {0};
             Document jsoupDoc = Jsoup.parse(html);
-            processBlockNodes(doc, jsoupDoc.body().childNodes(), options, imagePaths, warnings, bkId);
+            processBlockNodes(doc, jsoupDoc.body().childNodes(), options, imagePaths, warnings, bkId, snapshot);
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             doc.write(out);
@@ -57,7 +60,7 @@ public class DocxConverter {
 
     private void processBlockNodes(XWPFDocument doc, List<Node> nodes,
                                    ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings,
-                                   int[] bkId) {
+                                   int[] bkId, UserSettings settings) {
         for (Node node : nodes) {
             if (node instanceof TextNode tn) {
                 String text = tn.text().trim();
@@ -66,32 +69,32 @@ public class DocxConverter {
                     p.createRun().setText(text);
                 }
             } else if (node instanceof Element el) {
-                processBlockElement(doc, el, options, imagePaths, warnings, bkId);
+                processBlockElement(doc, el, options, imagePaths, warnings, bkId, settings);
             }
         }
     }
 
     private void processBlockElement(XWPFDocument doc, Element el,
                                      ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings,
-                                     int[] bkId) {
+                                     int[] bkId, UserSettings settings) {
         switch (el.tagName()) {
-            case "h1" -> addHeading(doc, el, 1, options, imagePaths, warnings, bkId);
-            case "h2" -> addHeading(doc, el, 2, options, imagePaths, warnings, bkId);
-            case "h3" -> addHeading(doc, el, 3, options, imagePaths, warnings, bkId);
-            case "h4" -> addHeading(doc, el, 4, options, imagePaths, warnings, bkId);
-            case "h5" -> addHeading(doc, el, 5, options, imagePaths, warnings, bkId);
-            case "h6" -> addHeading(doc, el, 6, options, imagePaths, warnings, bkId);
+            case "h1" -> addHeading(doc, el, 1, options, imagePaths, warnings, bkId, settings);
+            case "h2" -> addHeading(doc, el, 2, options, imagePaths, warnings, bkId, settings);
+            case "h3" -> addHeading(doc, el, 3, options, imagePaths, warnings, bkId, settings);
+            case "h4" -> addHeading(doc, el, 4, options, imagePaths, warnings, bkId, settings);
+            case "h5" -> addHeading(doc, el, 5, options, imagePaths, warnings, bkId, settings);
+            case "h6" -> addHeading(doc, el, 6, options, imagePaths, warnings, bkId, settings);
             case "p"  -> {
                 XWPFParagraph p = doc.createParagraph();
-                p.setSpacingBetween(1.2);
+                p.setSpacingBetween(settings.getLineHeight());
                 p.setSpacingAfter(Twips.SPACE_PARA_AFTER);
-                processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, new RunState());
+                processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, new RunState(settings));
             }
-            case "pre" -> addCodeBlock(doc, el);
-            case "ul" -> addList(doc, el, false, 1, options, imagePaths, warnings);
-            case "ol" -> addList(doc, el, true, 1, options, imagePaths, warnings);
-            case "blockquote" -> addBlockquote(doc, el, options, imagePaths, warnings);
-            case "table" -> addTable(doc, el, options, imagePaths, warnings);
+            case "pre" -> addCodeBlock(doc, el, settings);
+            case "ul" -> addList(doc, el, false, 1, options, imagePaths, warnings, settings);
+            case "ol" -> addList(doc, el, true, 1, options, imagePaths, warnings, settings);
+            case "blockquote" -> addBlockquote(doc, el, options, imagePaths, warnings, settings);
+            case "table" -> addTable(doc, el, options, imagePaths, warnings, settings);
             case "hr" -> addHorizontalLine(doc);
             case "img" -> addImageParagraph(doc, el, options, imagePaths, warnings);
             default -> {
@@ -101,7 +104,7 @@ public class DocxConverter {
                         addSpacerParagraph(doc, Twips.SPACE_TOC_BEFORE);
                         addTocTitle(doc);
                     }
-                    processBlockNodes(doc, el.childNodes(), options, imagePaths, warnings, bkId);
+                    processBlockNodes(doc, el.childNodes(), options, imagePaths, warnings, bkId, settings);
                     if (isToc) addSpacerParagraph(doc, Twips.SPACE_TOC_AFTER);
                 }
             }
@@ -155,7 +158,7 @@ public class DocxConverter {
     }
 
     private void configureRun(XWPFRun run, RunState state) {
-        UserSettings s = settingsService.get();
+        UserSettings s = state.settings;
         if (state.headingSize == null || state.bold) run.setBold(state.bold);
         run.setItalic(state.italic);
         if (state.strike) run.setStrikeThrough(true);
@@ -191,15 +194,14 @@ public class DocxConverter {
     // ── 제목 ──────────────────────────────────────────────────────────────────
 
     private void addHeading(XWPFDocument doc, Element el, int level, ConvertOptions options,
-                            LocalImagePaths imagePaths, List<ConvertWarning> warnings, int[] bkId) {
+                            LocalImagePaths imagePaths, List<ConvertWarning> warnings, int[] bkId, UserSettings settings) {
         XWPFParagraph p = doc.createParagraph();
         p.setStyle("Heading" + level);
         p.setSpacingBefore(Twips.SPACE_H_BEFORE);
         p.setSpacingAfter(Twips.SPACE_H_AFTER);
-        p.setSpacingBetween(1.2);
+        p.setSpacingBetween(settings.getLineHeight());
 
-        UserSettings s = settingsService.get();
-        int size = headingSize(level, s);
+        int size = headingSize(level, settings);
         String id = el.attr("id");
         int bid = bkId[0]++;
         if (!id.isEmpty()) {
@@ -207,7 +209,7 @@ public class DocxConverter {
             bookmark.setId(BigInteger.valueOf(bid));
             bookmark.setName(id);
         }
-        RunState state = new RunState();
+        RunState state = new RunState(settings);
         state.headingSize = size;
         processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, state);
         if (!id.isEmpty()) {
@@ -217,7 +219,7 @@ public class DocxConverter {
 
     // ── 코드 블록 ─────────────────────────────────────────────────────────────
 
-    private void addCodeBlock(XWPFDocument doc, Element preEl) {
+    private void addCodeBlock(XWPFDocument doc, Element preEl, UserSettings settings) {
         String code = preEl.text();
         for (String line : code.split("\n", -1)) {
             XWPFParagraph p = doc.createParagraph();
@@ -230,7 +232,7 @@ public class DocxConverter {
 
             XWPFRun run = p.createRun();
             run.setFontFamily("Courier New");
-            run.setFontSize(settingsService.get().getCodeFontSizePt());
+            run.setFontSize(settings.getCodeFontSizePt());
             run.setText(line.isEmpty() ? " " : line);
         }
     }
@@ -238,36 +240,36 @@ public class DocxConverter {
     // ── 목록 ──────────────────────────────────────────────────────────────────
 
     private void addList(XWPFDocument doc, Element listEl, boolean ordered, int depth,
-                         ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
+                         ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, UserSettings settings) {
         if (depth > 9) throw new IllegalArgumentException("DOCX lists support at most 9 levels");
         BigInteger start = ordered && listEl.hasAttr("start")
             ? new BigInteger(listEl.attr("start")) : BigInteger.ONE;
         BigInteger numId = createListNumbering(doc, ordered, depth, start);
         for (Element li : listEl.select("> li")) {
-            XWPFParagraph p = listParagraph(doc, depth, numId);
+            XWPFParagraph p = listParagraph(doc, depth, numId, settings);
             for (Node child : li.childNodes()) {
                 if (child instanceof Element e && (e.tagName().equals("ul") || e.tagName().equals("ol"))) {
-                    addList(doc, e, e.tagName().equals("ol"), depth + 1, options, imagePaths, warnings);
+                    addList(doc, e, e.tagName().equals("ol"), depth + 1, options, imagePaths, warnings, settings);
                     p = null;
                 } else if (child instanceof Element e && e.tagName().equals("p")) {
-                    if (p == null || !p.getRuns().isEmpty()) p = listParagraph(doc, depth, null);
-                    processInlineNodes(doc, p, e.childNodes(), options, imagePaths, warnings, new RunState());
+                    if (p == null || !p.getRuns().isEmpty()) p = listParagraph(doc, depth, null, settings);
+                    processInlineNodes(doc, p, e.childNodes(), options, imagePaths, warnings, new RunState(settings));
                     p = null;
                 } else {
                     if (child instanceof TextNode text && text.isBlank()
                             && (p == null || p.getRuns().isEmpty())) continue;
-                    if (p == null) p = listParagraph(doc, depth, null);
-                    processInlineNodes(doc, p, List.of(child), options, imagePaths, warnings, new RunState());
+                    if (p == null) p = listParagraph(doc, depth, null, settings);
+                    processInlineNodes(doc, p, List.of(child), options, imagePaths, warnings, new RunState(settings));
                 }
             }
         }
     }
 
-    private XWPFParagraph listParagraph(XWPFDocument doc, int depth, BigInteger numId) {
+    private XWPFParagraph listParagraph(XWPFDocument doc, int depth, BigInteger numId, UserSettings settings) {
         XWPFParagraph p = doc.createParagraph();
         p.setStyle("ListParagraph");
         p.setIndentationLeft(Twips.INDENT_BLOCK * depth);
-        p.setSpacingBetween(1.2);
+        p.setSpacingBetween(settings.getLineHeight());
         p.setSpacingAfter(Twips.SPACE_LIST_AFTER);
         if (numId != null) {
             p.setNumID(numId);
@@ -298,7 +300,7 @@ public class DocxConverter {
     // ── 인용문 ────────────────────────────────────────────────────────────────
 
     private void addBlockquote(XWPFDocument doc, Element el,
-                               ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
+                               ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, UserSettings settings) {
         XWPFParagraph p = doc.createParagraph();
         p.setIndentationLeft(Twips.INDENT_BLOCK);
 
@@ -308,7 +310,7 @@ public class DocxConverter {
         left.setSz(BigInteger.valueOf(Twips.BORDER_QUOTE_SZ));
         left.setColor("CCCCCC");
 
-        RunState state = new RunState();
+        RunState state = new RunState(settings);
         state = state.withColor("666666");
         processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, state);
     }
@@ -316,7 +318,7 @@ public class DocxConverter {
     // ── 표 ────────────────────────────────────────────────────────────────────
 
     private void addTable(XWPFDocument doc, Element tableEl,
-                          ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
+                          ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, UserSettings settings) {
         var rows = tableEl.select("tr");
         if (rows.isEmpty()) return;
 
@@ -339,7 +341,7 @@ public class DocxConverter {
                 cell.setWidth(Integer.toString(columnWidth));
 
                 XWPFParagraph p = cell.getParagraphs().get(0);
-                RunState state = isHeader ? new RunState().withBold(true) : new RunState();
+                RunState state = isHeader ? new RunState(settings).withBold(true) : new RunState(settings);
                 processInlineNodes(doc, p, cells.get(c).childNodes(), options, imagePaths, warnings, state);
 
                 if (isHeader) {
@@ -496,13 +498,24 @@ public class DocxConverter {
 
     // ── 기본 스타일 ──────────────────────────────────────────────────────────
 
-    private void setupDefaultStyles(XWPFDocument doc, ConvertOptions options) {
+    private void setupDefaultStyles(XWPFDocument doc, ConvertOptions options, UserSettings settings) {
         XWPFStyles styles = doc.createStyles();
         CTStyle normal = CTStyle.Factory.newInstance();
         normal.setStyleId("Normal");
         normal.setType(STStyleType.PARAGRAPH);
         normal.setDefault(true);
         normal.addNewName().setVal("Normal");
+        CTSpacing spacing = normal.addNewPPr().addNewSpacing();
+        spacing.setLine(BigInteger.valueOf(Math.round(settings.getLineHeight() * 240)));
+        spacing.setLineRule(STLineSpacingRule.AUTO);
+        CTRPr normalRun = normal.addNewRPr();
+        normalRun.addNewSz().setVal(BigInteger.valueOf(settings.getBodyFontSizePt() * 2L));
+        normalRun.addNewSzCs().setVal(BigInteger.valueOf(settings.getBodyFontSizePt() * 2L));
+        CTFonts normalFonts = normalRun.addNewRFonts();
+        String bodyFont = primaryFont(settings.getBodyFontFamily());
+        normalFonts.setAscii(bodyFont);
+        normalFonts.setHAnsi(bodyFont);
+        normalFonts.setEastAsia(bodyFont);
         styles.addStyle(new XWPFStyle(normal));
         CTStyle list = CTStyle.Factory.newInstance();
         list.setStyleId("ListParagraph");
@@ -510,7 +523,6 @@ public class DocxConverter {
         list.addNewName().setVal("List Paragraph");
         list.addNewBasedOn().setVal("Normal");
         styles.addStyle(new XWPFStyle(list));
-        UserSettings settings = settingsService.get();
         for (int level = 1; level <= 6; level++) {
             CTStyle heading = CTStyle.Factory.newInstance();
             heading.setStyleId("Heading" + level);
@@ -548,12 +560,11 @@ public class DocxConverter {
             pgSz.setH(BigInteger.valueOf(Twips.A4_HEIGHT));
         }
 
-        UserSettings s = settingsService.get();
         CTPageMar pgMar = sectPr.addNewPgMar();
-        pgMar.setTop(BigInteger.valueOf(mmToTwips(s.getMarginTopMm())));
-        pgMar.setBottom(BigInteger.valueOf(mmToTwips(s.getMarginBottomMm())));
-        pgMar.setLeft(BigInteger.valueOf(mmToTwips(s.getMarginLeftMm())));
-        pgMar.setRight(BigInteger.valueOf(mmToTwips(s.getMarginRightMm())));
+        pgMar.setTop(BigInteger.valueOf(mmToTwips(settings.getMarginTopMm())));
+        pgMar.setBottom(BigInteger.valueOf(mmToTwips(settings.getMarginBottomMm())));
+        pgMar.setLeft(BigInteger.valueOf(mmToTwips(settings.getMarginLeftMm())));
+        pgMar.setRight(BigInteger.valueOf(mmToTwips(settings.getMarginRightMm())));
     }
 
     // ── 레이아웃 상수 ─────────────────────────────────────────────────────────
@@ -580,9 +591,12 @@ public class DocxConverter {
     // ── RunState (불변 포맷 상태) ─────────────────────────────────────────────
 
     private static class RunState {
+        final UserSettings settings;
         boolean bold, italic, strike, code;
         String color;
         Integer headingSize;
+
+        RunState(UserSettings settings) { this.settings = settings; }
 
         RunState withBold(boolean v)   { RunState s = copy(); s.bold = v; return s; }
         RunState withItalic(boolean v) { RunState s = copy(); s.italic = v; return s; }
@@ -591,7 +605,7 @@ public class DocxConverter {
         RunState withColor(String c)   { RunState s = copy(); s.color = c; return s; }
 
         private RunState copy() {
-            RunState s = new RunState();
+            RunState s = new RunState(settings);
             s.bold = bold; s.italic = italic; s.strike = strike;
             s.code = code; s.color = color;
             s.headingSize = headingSize;

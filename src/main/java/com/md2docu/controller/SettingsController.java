@@ -33,6 +33,11 @@ public class SettingsController {
         return ResponseEntity.ok(settingsService.save(settings));
     }
 
+    @GetMapping("/defaults")
+    public ResponseEntity<UserSettings> defaults() {
+        return ResponseEntity.ok(new UserSettings());
+    }
+
     @PostMapping("/reset")
     public ResponseEntity<UserSettings> reset() throws IOException {
         return ResponseEntity.ok(settingsService.reset());
@@ -46,6 +51,11 @@ public class SettingsController {
     @ExceptionHandler(IOException.class)
     public ResponseEntity<Map<String, String>> handleIo(IOException e) {
         return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, String>> handleInvalidSettings(IllegalArgumentException e) {
+        return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
     }
 
     @ExceptionHandler(UncheckedIOException.class)

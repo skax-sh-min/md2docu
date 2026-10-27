@@ -285,7 +285,7 @@ System.out.println("Hello, md2docu!");
           </div>
           <div class="col-sm-3">
             <label class="form-label">줄 간격</label>
-            <input type="number" class="form-control form-control-sm" id="cfg-lineHeight" min="1.0" max="3.0" step="0.1"/>
+            <input type="number" class="form-control form-control-sm" id="cfg-lineHeight" min="1.0" max="3.0" step="any"/>
           </div>
         </div>
 
@@ -320,6 +320,9 @@ System.out.println("Hello, md2docu!");
 
         <hr class="my-3"/>
         <p class="fw-semibold mb-2">여백 (mm)</p>
+        <p class="small text-muted">저장할 때 A4와 LETTER 모두에서 최소
+          <span th:text="${minBodyWidthMm}"></span>×<span th:text="${minBodyHeightMm}"></span>mm의 본문 영역을 확보해야 합니다.
+          기존 설정이 맞지 않으면 기본값으로 복원한 뒤 저장하세요.</p>
         <div class="row g-2">
           <div class="col-6 col-sm-3">
             <label class="form-label small">상단</label>
@@ -574,26 +577,44 @@ System.out.println("Hello, md2docu!");
   }
 
   // ── 출력 설정 모달 ────────────────────────────────────────────────────────
-  const DEFAULT_SETTINGS = {
-    bodyFontFamily: 'Malgun Gothic, Noto Sans CJK, Arial, sans-serif',
-    bodyFontSizePt: 11, codeFontSizePt: 10, lineHeight: 1.6,
-    h1FontSizePt: 24, h2FontSizePt: 20, h3FontSizePt: 16,
-    h4FontSizePt: 14, h5FontSizePt: 12, h6FontSizePt: 11,
-    marginTopMm: 20, marginBottomMm: 20, marginLeftMm: 25, marginRightMm: 25
-  };
+  let settingsRevision = 0;
+  let settingsLoaded = false;
+  const settingsSave = document.getElementById('btn-settings-save');
+  const settingsReset = document.getElementById('btn-settings-reset');
+
+  async function settingsJson(url, options) {
+    const response = await fetch(url, options);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'HTTP ' + response.status);
+    return data;
+  }
+
+  function settingsError(message) {
+    const box = document.getElementById('settings-save-error');
+    box.textContent = message;
+    box.classList.remove('d-none');
+  }
 
   document.getElementById('settingsModal').addEventListener('show.bs.modal', async () => {
+    const revision = ++settingsRevision;
+    settingsLoaded = false;
+    settingsSave.disabled = true;
+    settingsReset.disabled = true;
+    document.getElementById('settings-save-error').classList.add('d-none');
     const [settingsRes, fontsRes] = await Promise.allSettled([
-      fetch('/api/settings'),
-      fetch('/api/settings/fonts')
+      settingsJson('/api/settings'),
+      settingsJson('/api/settings/fonts')
     ]);
-
-    if (settingsRes.status === 'fulfilled' && settingsRes.value.ok) {
-      applySettingsToForm(await settingsRes.value.json());
+    if (revision !== settingsRevision) return;
+    if (settingsRes.status === 'fulfilled') {
+      applySettingsToForm(settingsRes.value);
+      settingsLoaded = true;
+    } else {
+      settingsError('설정 불러오기 실패: ' + settingsRes.reason.message);
     }
 
-    if (fontsRes.status === 'fulfilled' && fontsRes.value.ok) {
-      const families = await fontsRes.value.json();
+    if (fontsRes.status === 'fulfilled') {
+      const families = fontsRes.value;
       const datalist = document.getElementById('font-suggestions');
       datalist.innerHTML = '';
       families.forEach(f => {
@@ -613,7 +634,17 @@ System.out.println("Hello, md2docu!");
       } else {
         wrapEl.classList.add('d-none');
       }
+    } else {
+      document.getElementById('detected-fonts-wrap').classList.add('d-none');
+      const previous = settingsRes.status === 'rejected' ? '설정 불러오기 실패: ' + settingsRes.reason.message + ' / ' : '';
+      settingsError(previous + '글꼴 목록 불러오기 실패: ' + fontsRes.reason.message + ' (글꼴 직접 입력 가능)');
     }
+    settingsSave.disabled = !settingsLoaded;
+    settingsReset.disabled = false;
+  });
+
+  document.getElementById('settingsModal').addEventListener('hidden.bs.modal', () => {
+    ++settingsRevision;
   });
 
   function applySettingsToForm(s) {
@@ -653,29 +684,57 @@ System.out.println("Hello, md2docu!");
     };
   }
 
-  document.getElementById('btn-settings-save').addEventListener('click', async () => {
-    const errBox = document.getElementById('settings-save-error');
+  settingsSave.addEventListener('click', async () => {
+    if (!settingsLoaded) {
+      settingsError('설정을 먼저 불러오거나 기본값으로 복원하세요.');
+      return;
+    }
+    for (const input of document.querySelectorAll('#settingsModal input[type="number"]')) {
+      if (!input.value.trim() || !input.checkValidity()) {
+        input.reportValidity();
+        settingsError('숫자 항목을 표시된 범위에 맞게 입력하세요.');
+        return;
+      }
+    }
+    const revision = ++settingsRevision;
+    settingsSave.disabled = true;
+    settingsReset.disabled = true;
     try {
-      const res = await fetch('/api/settings', {
+      const saved = await settingsJson('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(readSettingsFromForm())
       });
-      if (res.ok) {
-        bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        errBox.textContent = '저장 실패: ' + (data.error || res.status);
-        errBox.classList.remove('d-none');
-      }
+      if (revision !== settingsRevision) return;
+      applySettingsToForm(saved);
+      bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
     } catch(e) {
-      errBox.textContent = '저장 실패: ' + e.message;
-      errBox.classList.remove('d-none');
+      if (revision === settingsRevision) settingsError('저장 실패: ' + e.message);
+    } finally {
+      if (revision === settingsRevision) {
+        settingsSave.disabled = !settingsLoaded;
+        settingsReset.disabled = false;
+      }
     }
   });
 
-  document.getElementById('btn-settings-reset').addEventListener('click', () => {
-    applySettingsToForm(DEFAULT_SETTINGS);
+  settingsReset.addEventListener('click', async () => {
+    const revision = ++settingsRevision;
+    settingsSave.disabled = true;
+    settingsReset.disabled = true;
+    try {
+      const defaults = await settingsJson('/api/settings/defaults');
+      if (revision !== settingsRevision) return;
+      applySettingsToForm(defaults);
+      settingsLoaded = true;
+    } catch(e) {
+      if (revision === settingsRevision) settingsError('기본값 불러오기 실패: ' + e.message);
+    } finally {
+      if (revision === settingsRevision) {
+        settingsSave.disabled = !settingsLoaded;
+        settingsReset.disabled = false;
+      }
+    }
   });
 </script>
 </body>

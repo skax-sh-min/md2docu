@@ -5,6 +5,7 @@ import com.md2docu.model.ConvertWarning;
 import com.md2docu.model.UserSettings;
 import com.md2docu.util.ImageResolver;
 import com.md2docu.util.ImageResolver.LocalImagePaths;
+import com.md2docu.util.PageLayout;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import org.jsoup.Jsoup;
 import org.jsoup.helper.W3CDom;
@@ -56,10 +57,12 @@ public class PdfConverter {
     }
 
     public byte[] convert(String html, ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) throws IOException {
+        UserSettings snapshot = new UserSettings(settingsService.get());
+        PageLayout.validate(options.getPageSize(), snapshot);
         Document sanitized = sanitizeForPdf(html);
         processImages(sanitized, options, imagePaths, warnings);
         processLinks(sanitized, options, warnings);
-        String fullHtml = wrapHtml(sanitized.body().html(), options);
+        String fullHtml = wrapHtml(sanitized.body().html(), options, snapshot);
 
         Document jsoupDoc = Jsoup.parse(fullHtml);
         jsoupDoc.outputSettings().syntax(Document.OutputSettings.Syntax.xml);
@@ -209,8 +212,7 @@ public class PdfConverter {
         return uri.getHost() != null && uri.getUserInfo() == null && uri.getPort() <= 65535;
     }
 
-    private String wrapHtml(String body, ConvertOptions options) {
-        UserSettings s = settingsService.get();
+    private String wrapHtml(String body, ConvertOptions options, UserSettings s) {
         String css = buildCss(options, s);
         return "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\"/>\n"
             + "<style>\n" + css + "</style>\n"
@@ -224,11 +226,13 @@ public class PdfConverter {
         double imageHeight = Math.max(1, pageHeight
             - (s.getMarginTopMm() + s.getMarginBottomMm()) * 72.0 / 25.4 - 16);
         return "@page { size: " + options.getPageSize().toUpperCase() + "; margin: " + margin + "; }\n"
-            + "body { font-family: " + s.getBodyFontFamily() + "; font-size: " + s.getBodyFontSizePt() + "pt; line-height: " + s.getLineHeight() + "; color: #333; }\n"
+            + "body { margin: 0; font-family: " + s.getBodyFontFamily() + "; font-size: " + s.getBodyFontSizePt() + "pt; line-height: " + s.getLineHeight() + "; color: #333; }\n"
             + "h1 { font-size: " + s.getH1FontSizePt() + "pt; }\n"
             + "h2 { font-size: " + s.getH2FontSizePt() + "pt; }\n"
             + "h3 { font-size: " + s.getH3FontSizePt() + "pt; }\n"
-            + "h4, h5, h6 { font-size: " + s.getH4FontSizePt() + "pt; }\n"
+            + "h4 { font-size: " + s.getH4FontSizePt() + "pt; }\n"
+            + "h5 { font-size: " + s.getH5FontSizePt() + "pt; }\n"
+            + "h6 { font-size: " + s.getH6FontSizePt() + "pt; }\n"
             + "pre, code { font-size: " + s.getCodeFontSizePt() + "pt; }\n"
             + PDF_STATIC_CSS
             + "\n.image-table { table-layout: fixed; }\n"

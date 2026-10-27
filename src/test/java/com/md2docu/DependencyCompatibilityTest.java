@@ -17,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
@@ -441,6 +442,26 @@ class DependencyCompatibilityTest {
                 });
             }
         }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"pdf,A4", "docx,A4", "pdf,LETTER", "docx,LETTER"})
+    void reportsIncompatibleLegacyMarginsAsJsonForTextAndFileConversions(String format, String paper) throws Exception {
+        UserSettings legacy = new UserSettings();
+        legacy.setMarginLeftMm(25);
+        legacy.setMarginRightMm(25);
+        doReturn(legacy).when(settingsService).get();
+        mvc.perform(post("/api/convert/" + format + "/text").contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsBytes(Map.of("markdown", "# Document", "pageSize", paper))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error", containsString("180")))
+            .andExpect(jsonPath("$.error", containsString("250")));
+        var file = new MockMultipartFile("file", "document.md", "text/markdown",
+            "# Document".getBytes(StandardCharsets.UTF_8));
+        mvc.perform(multipart("/api/convert/" + format).file(file).param("pageSize", paper))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error", containsString("180")))
+            .andExpect(jsonPath("$.error", containsString("250")));
     }
 
     private ConversionResponse convertArchive(String format, Map<String, byte[]> entries) throws Exception {

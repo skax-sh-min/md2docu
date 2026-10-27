@@ -4,6 +4,7 @@ import com.md2docu.model.ConvertOptions;
 import com.md2docu.model.ConvertResult;
 import com.md2docu.model.ConvertWarning;
 import com.md2docu.service.ConvertService;
+import com.md2docu.util.PageLayout;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -209,6 +210,11 @@ public class ConvertController {
     @ExceptionHandler(UncheckedIOException.class)
     public ResponseEntity<Map<String, String>> handleUncheckedIoException(UncheckedIOException e) {
         return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(PageLayout.InvalidLayoutException.class)
+    public ResponseEntity<Map<String, String>> handleInvalidLayout(PageLayout.InvalidLayoutException e) {
+        return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
     }
 
     private String requireString(Map<String, Object> body, String key) throws IOException {

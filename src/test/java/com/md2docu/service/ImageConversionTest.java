@@ -219,6 +219,28 @@ class ImageConversionTest {
         assertThat(warnings).isEmpty();
     }
 
+    @Test
+    void fitsImagesAfterApplyingNestedQuoteAndQuotedTableIndentation() throws Exception {
+        String src = TestImages.dataUri(TestImages.raster("png", 2400, 600));
+        try (var document = docx("<blockquote>".repeat(5) + "<p><img src='" + src
+            + "'></p>" + "</blockquote>".repeat(5))) {
+            var paragraph = document.getParagraphs().get(0);
+            assertThat(paragraph.getIndentationLeft()).isEqualTo(3600);
+            assertThat(extent(paragraph).getWidth()).isLessThanOrEqualTo(
+                595.3 - 30 * 72.0 / 25.4 - paragraph.getIndentationLeft() / 20.0 + 1);
+            assertThat(extent(paragraph).getWidth() / extent(paragraph).getHeight()).isCloseTo(4, within(0.001));
+        }
+        try (var document = docx("<blockquote><table><tr><td><img src='" + src
+            + "'></td><td>Other</td></tr></table></blockquote>")) {
+            var cell = document.getTables().get(0).getRow(0).getCell(0);
+            var paragraph = cell.getParagraphs().get(0);
+            assertThat(paragraph.getIndentationLeft()).isEqualTo(720);
+            assertThat(extent(paragraph).getWidth()).isLessThanOrEqualTo(
+                cell.getWidth() / 20.0 - 10.8 - paragraph.getIndentationLeft() / 20.0 + 0.001);
+        }
+        assertThat(warnings).isEmpty();
+    }
+
     private void narrowPage(String pageSize) {
         options.setPageSize(pageSize);
         settings.setMarginLeftMm(15);

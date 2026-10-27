@@ -9,6 +9,7 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Element;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayInputStream;
@@ -166,6 +167,98 @@ class DocxStructureTest {
         assertThat(html.selectFirst("body > ul > li").text()).startsWith("Bold Italic");
         assertThat(html.select("body > ul > li > ol")).hasSize(2);
         assertThat(html.select("body > ul > li > ol").eachAttr("start")).containsExactly("3", "7");
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void preservesOriginalHeadingLinksWithTocAndNumbering(boolean toc, boolean numbers) throws Exception {
+        String html = markdown.toHtml("[Jump](#target)\n\n## Target\n\nBody", toc, numbers);
+        try (var doc = open(convert(html))) {
+            var link = doc.getParagraphs().stream().filter(p -> p.getText().equals("Jump")).findFirst().orElseThrow();
+            var heading = doc.getParagraphs().stream().filter(p -> "Heading2".equals(p.getStyleID()))
+                .findFirst().orElseThrow();
+            assertThat(link.getCTP().getHyperlinkArray(0).getAnchor())
+                .isEqualTo(heading.getCTP().getBookmarkStartArray(0).getName());
+            assertThat(heading.getCTP().getBookmarkStartArray(0).getName()).isEqualTo("target");
+            assertThat(warnings).isEmpty();
+        }
+    }
+
+    @Test
+    void preservesFencedCodeWhitespaceTabsAndBlankLinesWithoutAnExtraFinalParagraph() throws Exception {
+        String source = "```text\n    first  \n\n\tsecond\t\n\n```";
+        try (var doc = open(convert(markdown.toHtml(source, false, false)))) {
+            assertThat(doc.getParagraphs()).extracting(p -> p.getText())
+                .containsExactly("    first  ", "", "\tsecond\t", "");
+            assertThat(doc.getParagraphs().get(2).getRuns().get(0).getCTR().sizeOfTabArray()).isEqualTo(2);
+            assertThat(doc.getParagraphs()).allSatisfy(p ->
+                assertThat(p.getRuns().get(0).getFontFamily()).isEqualTo("Courier New"));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "  ", "    first  \n  second", "\n  first\n\n"})
+    void preservesRawPreformattedTextIncludingEmptyLines(String source) throws Exception {
+        Element pre = new Element("pre");
+        pre.appendElement("code").text(source);
+        String expected = source.endsWith("\n") ? source.substring(0, source.length() - 1) : source;
+        try (var doc = open(convert(pre.outerHtml()))) {
+            assertThat(doc.getParagraphs()).extracting(p -> p.getText())
+                .containsExactly(expected.split("\n", -1));
+        }
+    }
+
+    @Test
+    void keepsQuotedParagraphsSeparateAndAppliesQuoteFormattingToBoth() throws Exception {
+        try (var doc = open(convert(markdown.toHtml("> First\n>\n> Second", false, false)))) {
+            assertThat(doc.getParagraphs()).extracting(p -> p.getText()).containsExactly("First", "Second");
+            assertThat(doc.getParagraphs()).allSatisfy(p -> {
+                assertThat(p.getIndentationLeft()).isEqualTo(720);
+                assertThat(p.getCTP().getPPr().getPBdr().getLeft().xgetColor().getStringValue()).isEqualTo("CCCCCC");
+                assertThat(p.getRuns()).allSatisfy(run -> assertThat(run.getColor()).isEqualTo("666666"));
+            });
+        }
+    }
+
+    @Test
+    void preservesListsNestedQuotesAndParagraphBoundariesInsideQuotes() throws Exception {
+        String source = "> First\n>\n> - Item\n>   - Child\n>\n> > Nested\n>\n> Last\n\nOutside";
+        try (var doc = open(convert(markdown.toHtml(source, false, false)))) {
+            assertThat(doc.getParagraphs()).extracting(p -> p.getText())
+                .containsExactly("First", "Item", "Child", "Nested", "Last", "Outside");
+            assertThat(doc.getParagraphs().subList(0, 5)).extracting(p -> p.getIndentationLeft())
+                .containsExactly(720, 1440, 2160, 1440, 720);
+            assertThat(doc.getParagraphs().get(1).getNumID()).isNotNull();
+            assertThat(doc.getParagraphs().get(2).getNumID()).isNotNull();
+            assertThat(doc.getParagraphs().get(5).getCTP().getPPr().isSetPBdr()).isFalse();
+        }
+    }
+
+    @Test
+    void groupsBareQuotedInlineContentAndPreservesLinksAndBookmarks() throws Exception {
+        try (var doc = open(convert("<p><a href='#destination'>Jump</a></p>"
+            + "<blockquote id='quote'>First <strong>bold</strong> <a href='https://example.com'>link</a>"
+            + "<p id='destination'>Second</p></blockquote>"))) {
+            assertThat(doc.getParagraphs()).extracting(p -> p.getText())
+                .containsExactly("Jump", "First bold link", "Second");
+            var target = doc.getParagraphs().get(2).getCTP().getBookmarkStartArray(0);
+            assertThat(doc.getParagraphs().get(0).getCTP().getHyperlinkArray(0).getAnchor()).isEqualTo(target.getName());
+            assertThat(doc.getParagraphs().get(1).getCTP().getHyperlinkList()).hasSize(1);
+            assertThat(warnings).isEmpty();
+        }
+    }
+
+    @Test
+    void preservesQuotedCodeBlocksWithinListItems() throws Exception {
+        String html = "<ul><li><p>Item</p><blockquote><p>First</p><pre><code>    code\n</code></pre>"
+            + "<p>Second</p></blockquote></li></ul>";
+        try (var doc = open(convert(html))) {
+            assertThat(doc.getParagraphs()).extracting(p -> p.getText())
+                .containsExactly("Item", "First", "    code", "Second");
+            assertThat(doc.getParagraphs().get(0).getNumID()).isNotNull();
+            assertThat(doc.getParagraphs().subList(1, 4)).extracting(p -> p.getIndentationLeft())
+                .containsExactly(1440, 2160, 1440);
+        }
     }
 
     @Test

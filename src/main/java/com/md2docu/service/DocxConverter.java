@@ -79,7 +79,8 @@ public class DocxConverter {
                 String text = tn.text().trim();
                 if (!text.isEmpty()) {
                     XWPFParagraph p = doc.createParagraph();
-                    p.createRun().setText(text);
+                    formatBlockParagraph(p, tn);
+                    applyRun(p, text, new RunState(settings, bookmarks, tn));
                 }
             } else if (node instanceof Element el) {
                 processBlockElement(doc, el, options, imagePaths, warnings, bookmarks, settings);
@@ -102,19 +103,21 @@ public class DocxConverter {
                 XWPFParagraph p = doc.createParagraph();
                 p.setSpacingBetween(settings.getLineHeight());
                 p.setSpacingAfter(Twips.SPACE_PARA_AFTER);
-                processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, new RunState(settings, bookmarks));
+                formatBlockParagraph(p, el);
+                processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, new RunState(settings, bookmarks, el));
             }
             case "a", "span" -> {
                 XWPFParagraph p = doc.createParagraph();
-                processInlineElement(doc, p, el, options, imagePaths, warnings, new RunState(settings, bookmarks));
+                formatBlockParagraph(p, el);
+                processInlineElement(doc, p, el, options, imagePaths, warnings, new RunState(settings, bookmarks, el));
             }
             case "pre" -> addCodeBlock(doc, el, settings, bookmarks);
             case "ul" -> addList(doc, el, false, 1, options, imagePaths, warnings, settings, bookmarks);
             case "ol" -> addList(doc, el, true, 1, options, imagePaths, warnings, settings, bookmarks);
             case "blockquote" -> addBlockquote(doc, el, options, imagePaths, warnings, settings, bookmarks);
             case "table" -> addTable(doc, el, options, imagePaths, warnings, settings, bookmarks);
-            case "hr" -> addHorizontalLine(doc);
-            case "img" -> addImageParagraph(doc, el, options, imagePaths, warnings, new RunState(settings, bookmarks));
+            case "hr" -> addHorizontalLine(doc, el);
+            case "img" -> addImageParagraph(doc, el, options, imagePaths, warnings, new RunState(settings, bookmarks, el));
             default -> {
                 if (!el.childNodes().isEmpty()) {
                     boolean isToc = el.hasClass("toc");
@@ -138,6 +141,8 @@ public class DocxConverter {
         for (Node node : nodes) {
             if (node instanceof TextNode tn) {
                 String text = tn.getWholeText();
+                if (tn.nextSibling() instanceof Element next && next.isBlock()) text = text.stripTrailing();
+                if (tn.previousSibling() instanceof Element previous && previous.isBlock()) text = text.stripLeading();
                 if (!text.isEmpty()) {
                     applyRun(para, text, state);
                 }
@@ -230,9 +235,10 @@ public class DocxConverter {
         p.setSpacingBefore(Twips.SPACE_H_BEFORE);
         p.setSpacingAfter(Twips.SPACE_H_AFTER);
         p.setSpacingBetween(settings.getLineHeight());
+        formatBlockParagraph(p, el);
 
         int size = headingSize(level, settings);
-        RunState state = new RunState(settings, bookmarks);
+        RunState state = new RunState(settings, bookmarks, el);
         state.headingSize = size;
         processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, state);
     }
@@ -240,7 +246,9 @@ public class DocxConverter {
     // ── 코드 블록 ─────────────────────────────────────────────────────────────
 
     private void addCodeBlock(XWPFDocument doc, Element preEl, UserSettings settings, Bookmarks bookmarks) {
-        String code = preEl.text();
+        String code = preEl.wholeText().replace("\r\n", "\n").replace('\r', '\n');
+        // A final newline terminates the last code line, not an additional blank paragraph.
+        if (code.endsWith("\n")) code = code.substring(0, code.length() - 1);
         boolean first = true;
         for (String line : code.split("\n", -1)) {
             XWPFParagraph p = doc.createParagraph();
@@ -249,16 +257,19 @@ public class DocxConverter {
                 first = false;
             }
             p.setIndentationLeft(Twips.INDENT_BLOCK);
+            formatBlockParagraph(p, preEl);
 
             CTPPr pPr = p.getCTP().getPPr() != null ? p.getCTP().getPPr() : p.getCTP().addNewPPr();
             CTShd shd = pPr.addNewShd();
             shd.setFill("F5F5F5");
             shd.setVal(STShd.CLEAR);
 
-            XWPFRun run = p.createRun();
-            run.setFontFamily("Courier New");
-            run.setFontSize(settings.getCodeFontSizePt());
-            run.setText(line.isEmpty() ? " " : line);
+            XWPFRun run = createRun(p, new RunState(settings, bookmarks, preEl).withCode(true));
+            String[] parts = line.split("\t", -1);
+            for (int i = 0; i < parts.length; i++) {
+                if (i > 0) run.addTab();
+                run.setText(parts[i]);
+            }
         }
     }
 
@@ -272,22 +283,26 @@ public class DocxConverter {
             ? new BigInteger(listEl.attr("start")) : BigInteger.ONE;
         BigInteger numId = createListNumbering(doc, ordered, depth, start);
         for (Element li : listEl.select("> li")) {
-            XWPFParagraph p = listParagraph(doc, depth, numId, settings);
+            XWPFParagraph p = listParagraph(doc, depth, numId, settings, li);
             bookmarks.mark(p, li, null);
             for (Node child : li.childNodes()) {
                 if (child instanceof Element e && (e.tagName().equals("ul") || e.tagName().equals("ol"))) {
                     addList(doc, e, e.tagName().equals("ol"), depth + 1, options, imagePaths, warnings, settings, bookmarks);
                     p = null;
                 } else if (child instanceof Element e && e.tagName().equals("p")) {
-                    if (p == null || hasInlineContent(p)) p = listParagraph(doc, depth, null, settings);
+                    if (p == null || hasInlineContent(p)) p = listParagraph(doc, depth, null, settings, e);
                     bookmarks.mark(p, e, null);
-                    processInlineNodes(doc, p, e.childNodes(), options, imagePaths, warnings, new RunState(settings, bookmarks));
+                    processInlineNodes(doc, p, e.childNodes(), options, imagePaths, warnings, new RunState(settings, bookmarks, e));
+                    p = null;
+                } else if (child instanceof Element e && e.isBlock()) {
+                    processBlockElement(doc, e, options, imagePaths, warnings, bookmarks, settings);
                     p = null;
                 } else {
                     if (child instanceof TextNode text && text.isBlank()
-                            && (p == null || !hasInlineContent(p))) continue;
-                    if (p == null) p = listParagraph(doc, depth, null, settings);
-                    processInlineNodes(doc, p, List.of(child), options, imagePaths, warnings, new RunState(settings, bookmarks));
+                            && (p == null || !hasInlineContent(p)
+                                || child.nextSibling() instanceof Element next && next.isBlock())) continue;
+                    if (p == null) p = listParagraph(doc, depth, null, settings, li);
+                    processInlineNodes(doc, p, List.of(child), options, imagePaths, warnings, new RunState(settings, bookmarks, li));
                 }
             }
         }
@@ -298,7 +313,7 @@ public class DocxConverter {
         return paragraph.getCTP().sizeOfRArray() > 0 || paragraph.getCTP().sizeOfHyperlinkArray() > 0;
     }
 
-    private XWPFParagraph listParagraph(XWPFDocument doc, int depth, BigInteger numId, UserSettings settings) {
+    private XWPFParagraph listParagraph(XWPFDocument doc, int depth, BigInteger numId, UserSettings settings, Node source) {
         XWPFParagraph p = doc.createParagraph();
         p.setStyle("ListParagraph");
         p.setIndentationLeft(Twips.INDENT_BLOCK * depth);
@@ -309,6 +324,7 @@ public class DocxConverter {
             p.setNumILvl(BigInteger.valueOf(depth - 1));
             p.setIndentationHanging(Twips.INDENT_BLOCK / 2);
         }
+        formatBlockParagraph(p, source);
         return p;
     }
 
@@ -334,18 +350,56 @@ public class DocxConverter {
 
     private void addBlockquote(XWPFDocument doc, Element el,
                                ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings, UserSettings settings, Bookmarks bookmarks) {
+        List<Node> inline = new ArrayList<>();
+        for (Node child : el.childNodes()) {
+            if (child instanceof Element block && block.isBlock()) {
+                addQuotedInline(doc, el, inline, options, imagePaths, warnings, settings, bookmarks);
+                inline.clear();
+                processBlockElement(doc, block, options, imagePaths, warnings, bookmarks, settings);
+            } else {
+                inline.add(child);
+            }
+        }
+        addQuotedInline(doc, el, inline, options, imagePaths, warnings, settings, bookmarks);
+    }
+
+    private void addQuotedInline(XWPFDocument doc, Element source, List<Node> nodes,
+                                 ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings,
+                                 UserSettings settings, Bookmarks bookmarks) {
+        if (nodes.stream().noneMatch(node -> node instanceof Element
+                || node instanceof TextNode text && !text.isBlank())) return;
         XWPFParagraph p = doc.createParagraph();
-        p.setIndentationLeft(Twips.INDENT_BLOCK);
+        formatBlockParagraph(p, source);
+        processInlineNodes(doc, p, nodes, options, imagePaths, warnings, new RunState(settings, bookmarks, source));
+    }
 
-        CTPPr pPr = p.getCTP().getPPr() != null ? p.getCTP().getPPr() : p.getCTP().addNewPPr();
-        CTBorder left = pPr.addNewPBdr().addNewLeft();
-        left.setVal(STBorder.SINGLE);
-        left.setSz(BigInteger.valueOf(Twips.BORDER_QUOTE_SZ));
-        left.setColor("CCCCCC");
+    private static int quoteDepth(Node source) {
+        int depth = 0;
+        for (Node node = source; node != null; node = node.parent()) {
+            if (node instanceof Element element && element.tagName().equals("blockquote")) depth++;
+        }
+        return depth;
+    }
 
-        RunState state = new RunState(settings, bookmarks);
-        state = state.withColor("666666");
-        processInlineNodes(doc, p, el.childNodes(), options, imagePaths, warnings, state);
+    private void formatBlockParagraph(XWPFParagraph paragraph, Node source) {
+        int quotes = quoteDepth(source);
+        int indent = quotes;
+        if (!"ListParagraph".equals(paragraph.getStyleID())) {
+            for (Node node = source; node != null; node = node.parent()) {
+                if (node instanceof Element element && element.tagName().equals("li")) indent++;
+            }
+        }
+        if (indent > 0) {
+            paragraph.setIndentationLeft(Math.max(0, paragraph.getIndentationLeft()) + Twips.INDENT_BLOCK * indent);
+        }
+        if (quotes > 0) {
+            CTPPr properties = paragraph.getCTP().isSetPPr()
+                ? paragraph.getCTP().getPPr() : paragraph.getCTP().addNewPPr();
+            CTBorder left = (properties.isSetPBdr() ? properties.getPBdr() : properties.addNewPBdr()).addNewLeft();
+            left.setVal(STBorder.SINGLE);
+            left.setSz(BigInteger.valueOf(Twips.BORDER_QUOTE_SZ));
+            left.setColor("CCCCCC");
+        }
     }
 
     // ── 표 ────────────────────────────────────────────────────────────────────
@@ -374,12 +428,14 @@ public class DocxConverter {
                 cell.setWidth(Integer.toString(columnWidth));
 
                 XWPFParagraph p = cell.getParagraphs().get(0);
+                formatBlockParagraph(p, cells.get(c));
                 bookmarks.mark(p, cells.get(c), null);
                 for (Element parent : cells.get(c).parents()) {
                     if (parent == tableEl) break;
                     bookmarks.mark(p, parent, null);
                 }
-                RunState state = isHeader ? new RunState(settings, bookmarks).withBold(true) : new RunState(settings, bookmarks);
+                RunState state = new RunState(settings, bookmarks, cells.get(c));
+                if (isHeader) state = state.withBold(true);
                 processInlineNodes(doc, p, cells.get(c).childNodes(), options, imagePaths, warnings, state);
 
                 if (isHeader) {
@@ -407,9 +463,11 @@ public class DocxConverter {
 
     // ── 수평선 ────────────────────────────────────────────────────────────────
 
-    private void addHorizontalLine(XWPFDocument doc) {
+    private void addHorizontalLine(XWPFDocument doc, Element source) {
         XWPFParagraph p = doc.createParagraph();
-        CTBorder bottom = p.getCTP().addNewPPr().addNewPBdr().addNewBottom();
+        formatBlockParagraph(p, source);
+        CTPPr properties = p.getCTP().isSetPPr() ? p.getCTP().getPPr() : p.getCTP().addNewPPr();
+        CTBorder bottom = (properties.isSetPBdr() ? properties.getPBdr() : properties.addNewPBdr()).addNewBottom();
         bottom.setVal(STBorder.SINGLE);
         bottom.setSz(BigInteger.valueOf(Twips.BORDER_HR_SZ));
         bottom.setColor("CCCCCC");
@@ -423,6 +481,7 @@ public class DocxConverter {
         String src = imgEl.attr("src");
         XWPFParagraph p = doc.createParagraph();
         p.setAlignment(ParagraphAlignment.CENTER);
+        formatBlockParagraph(p, imgEl);
         embedImage(p, src, options, imagePaths, warnings, state);
     }
 
@@ -703,6 +762,11 @@ public class DocxConverter {
         Integer headingSize;
 
         RunState(UserSettings settings, Bookmarks bookmarks) { this.settings = settings; this.bookmarks = bookmarks; }
+
+        RunState(UserSettings settings, Bookmarks bookmarks, Node source) {
+            this(settings, bookmarks);
+            if (quoteDepth(source) > 0) color = "666666";
+        }
 
         RunState withBold(boolean v)   { RunState s = copy(); s.bold = v; return s; }
         RunState withItalic(boolean v) { RunState s = copy(); s.italic = v; return s; }

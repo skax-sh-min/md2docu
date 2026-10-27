@@ -39,6 +39,7 @@ public class MarkdownService {
             AutolinkExtension.create()
         ));
         options.set(HtmlRenderer.SOFT_BREAK, "<br />\n");
+        options.set(HtmlRenderer.RENDER_HEADER_ID, true);
 
         this.parser = Parser.builder(options).build();
         this.renderer = HtmlRenderer.builder(options)
@@ -57,7 +58,6 @@ public class MarkdownService {
 
     public String toHtml(String markdown, boolean generateToc, boolean numberHeadings) {
         Node document = parser.parse(markdown);
-        if (!generateToc && !numberHeadings) return renderer.render(document);
 
         List<Heading> headings = new ArrayList<>();
         Heading firstTitle = null;
@@ -70,25 +70,35 @@ public class MarkdownService {
                 }
             }
         }
-        if (headings.isEmpty()) return renderer.render(document);
-
-        Set<String> usedIds = generateToc
-            ? new HashSet<>(Jsoup.parseBodyFragment(renderer.render(document)).select("[id]").eachAttr("id"))
-            : new HashSet<>();
+        List<Heading> allHeadings = new ArrayList<>();
+        collectHeadings(document, allHeadings);
+        if (allHeadings.isEmpty()) return renderer.render(document);
+        Set<String> usedIds = new HashSet<>();
+        Set<String> duplicateIds = new HashSet<>();
+        for (String id : Jsoup.parseBodyFragment(renderer.render(document)).select("[id]").eachAttr("id")) {
+            if (!usedIds.add(id)) duplicateIds.add(id);
+        }
+        // Freeze IDs before numbering changes the heading text.
+        int nextId = 1;
+        for (Heading heading : allHeadings) {
+            String id = heading.getAnchorRefId();
+            if (id.isEmpty() || duplicateIds.contains(id)) {
+                do {
+                    id = "toc-" + nextId++;
+                } while (!usedIds.add(id));
+            }
+            heading.setAnchorRefId(id);
+            heading.setExplicitAnchorRefId(true);
+        }
+        if (headings.isEmpty() || !generateToc && !numberHeadings) return renderer.render(document);
         Element toc = new Element("div").addClass("toc");
         int[] counters = new int[7];
-        int nextId = 1;
         for (Heading heading : headings) {
             String text = generateToc ? Jsoup.parseBodyFragment(renderer.render(heading)).text() : "";
             String prefix = numberHeadings ? nextNumber(counters, heading.getLevel()) + " " : "";
             if (numberHeadings) heading.prependChild(new Text(prefix));
+            String id = heading.getAnchorRefId();
             if (generateToc) {
-                String id;
-                do {
-                    id = "toc-" + nextId++;
-                } while (!usedIds.add(id));
-                heading.setAnchorRefId(id);
-                heading.setExplicitAnchorRefId(true);
                 Element item = toc.appendElement("p").addClass("toc-item")
                     .addClass("toc-l" + heading.getLevel());
                 item.append("&nbsp;&nbsp;".repeat((heading.getLevel() - 2) * 2));
@@ -105,6 +115,13 @@ public class MarkdownService {
             firstTitle.insertAfter(tocBlock);
         }
         return renderer.render(document);
+    }
+
+    private void collectHeadings(Node node, List<Heading> headings) {
+        for (Node child : node.getChildren()) {
+            if (child instanceof Heading heading) headings.add(heading);
+            collectHeadings(child, headings);
+        }
     }
 
     private String nextNumber(int[] counters, int level) {

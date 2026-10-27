@@ -15,7 +15,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
@@ -28,6 +27,12 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import java.nio.file.Path;
@@ -42,6 +47,7 @@ public class ConvertService {
         .followRedirects(HttpClient.Redirect.NEVER)
         .build();
     private static final long MAX_DOWNLOAD_BYTES = 10L * 1024 * 1024;
+    private static final Duration DOWNLOAD_TIMEOUT = Duration.ofSeconds(15);
 
     private final MarkdownService markdownService;
     private final PdfConverter pdfConverter;
@@ -259,38 +265,96 @@ public class ConvertService {
     private byte[] downloadFromUrl(String url) throws IOException {
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(url))
-            .timeout(Duration.ofSeconds(15))
+            .timeout(DOWNLOAD_TIMEOUT)
             .GET()
             .build();
-        try {
-            HttpResponse<InputStream> response = httpClient.send(request,
-                HttpResponse.BodyHandlers.ofInputStream());
-            int status = response.statusCode();
+        CompletableFuture<HttpResponse<byte[]>> download = httpClient.sendAsync(request, info -> {
+            int status = info.statusCode();
+            ResponseStatusException failure = null;
             if (status >= 300 && status < 400) {
-                try (InputStream ignored = response.body()) { /* drain */ }
-                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                failure = new ResponseStatusException(HttpStatus.BAD_GATEWAY,
                     "URL이 리다이렉트됩니다 (HTTP " + status + "). "
                     + "GitHub/GitLab 파일 링크를 사용하거나 Raw URL을 직접 입력해 주세요.");
+            } else if (status < 200 || status >= 300) {
+                failure = new ResponseStatusException(HttpStatus.BAD_GATEWAY, "다운로드 실패: HTTP " + status);
             }
-            if (status < 200 || status >= 300) {
-                try (InputStream ignored = response.body()) { /* drain */ }
-                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "다운로드 실패: HTTP " + status);
-            }
-            try (InputStream is = response.body()) {
-                byte[] buf = is.readNBytes((int) MAX_DOWNLOAD_BYTES + 1);
-                if (buf.length > MAX_DOWNLOAD_BYTES) {
-                    throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "파일 크기가 최대 허용량("
-                        + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + "MB)을 초과했습니다.");
-                }
-                return buf;
-            }
-        } catch (java.net.http.HttpTimeoutException e) {
+            return new DownloadBodySubscriber(failure);
+        });
+        try {
+            return download.get(DOWNLOAD_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS).body();
+        } catch (TimeoutException e) {
+            download.cancel(true);
             throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "URL 다운로드 시간이 초과되었습니다 (15초).", e);
-        } catch (IOException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "URL 다운로드 중 통신 오류가 발생했습니다.", e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof ResponseStatusException response) throw response;
+            if (cause instanceof java.net.http.HttpTimeoutException) {
+                throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "URL 다운로드 시간이 초과되었습니다 (15초).", cause);
+            }
+            if (cause instanceof IOException) {
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "URL 다운로드 중 통신 오류가 발생했습니다.", cause);
+            }
+            throw new IOException("URL 다운로드 중 오류가 발생했습니다.", cause);
         } catch (InterruptedException e) {
+            download.cancel(true);
             Thread.currentThread().interrupt();
             throw new IOException("다운로드가 중단되었습니다.", e);
+        }
+    }
+
+    private static final class DownloadBodySubscriber implements HttpResponse.BodySubscriber<byte[]> {
+        private final CompletableFuture<byte[]> body = new CompletableFuture<>();
+        private final ByteArrayOutputStream output = new ByteArrayOutputStream();
+        private final ResponseStatusException failure;
+        private Flow.Subscription subscription;
+
+        private DownloadBodySubscriber(ResponseStatusException failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        public CompletionStage<byte[]> getBody() {
+            return body;
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription subscription) {
+            this.subscription = subscription;
+            if (failure != null) {
+                body.completeExceptionally(failure);
+                subscription.cancel();
+            } else {
+                subscription.request(1);
+            }
+        }
+
+        @Override
+        public void onNext(List<ByteBuffer> buffers) {
+            if (body.isDone()) return;
+            long bytes = output.size();
+            for (ByteBuffer buffer : buffers) bytes += buffer.remaining();
+            if (bytes > MAX_DOWNLOAD_BYTES) {
+                body.completeExceptionally(new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
+                    "파일 크기가 최대 허용량(" + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + "MB)을 초과했습니다."));
+                subscription.cancel();
+            } else {
+                for (ByteBuffer buffer : buffers) {
+                    byte[] chunk = new byte[buffer.remaining()];
+                    buffer.get(chunk);
+                    output.writeBytes(chunk);
+                }
+                subscription.request(1);
+            }
+        }
+
+        @Override
+        public void onError(Throwable error) {
+            body.completeExceptionally(error);
+        }
+
+        @Override
+        public void onComplete() {
+            if (!body.isDone()) body.complete(output.toByteArray());
         }
     }
 
@@ -355,7 +419,8 @@ public class ConvertService {
             .replaceAll("_+", "_")
             .replaceAll("^_|_$", "");
         if (slug.isEmpty()) return "chapter";
-        return slug.length() > 50 ? slug.substring(0, 50) : slug;
+        int length = slug.codePointCount(0, slug.length());
+        return length > 50 ? slug.substring(0, slug.offsetByCodePoints(0, 50)) : slug;
     }
 
     private byte[] createZip(Map<String, byte[]> entries) throws IOException {

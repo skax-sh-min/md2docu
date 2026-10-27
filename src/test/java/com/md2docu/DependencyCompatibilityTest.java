@@ -179,7 +179,7 @@ class DependencyCompatibilityTest {
                 assertThat(links).hasSize(toc ? 2 : 0);
                 if (toc) {
                     var headings = doc.getParagraphs().stream()
-                        .filter(p -> !p.getCTP().getBookmarkStartList().isEmpty()).toList();
+                        .filter(p -> "Heading2".equals(p.getStyleID()) || "Heading3".equals(p.getStyleID())).toList();
                     assertThat(headings).extracting(p -> p.getText()).containsExactly(first, child);
                     var bookmarks = headings.stream()
                         .flatMap(p -> p.getCTP().getBookmarkStartList().stream()).toList();
@@ -686,6 +686,32 @@ class DependencyCompatibilityTest {
         assertThat(chapter).contains("## First", "7. Parent", "- Child").doesNotContain("Second body");
         var html = Jsoup.parseBodyFragment(new com.md2docu.service.MarkdownService().toHtml(chapter, false, false));
         assertThat(html.select("ol > li > ul > li").eachText()).containsExactly("Child");
+    }
+
+    @ParameterizedTest
+    @CsvSource({"49,1,49,1", "49,2,49,1", "0,51,0,50", "50,1,50,0"})
+    void splitsUnicodeChapterNamesOnCodePointBoundaries(int ascii, int emoji, int keptAscii, int keptEmoji) throws Exception {
+        String title = "A".repeat(ascii) + "\uD83D\uDE00".repeat(emoji);
+        byte[] bytes;
+        try (var doc = new XWPFDocument()) {
+            var heading = doc.createParagraph();
+            heading.setStyle("Heading2");
+            heading.createRun().setText(title);
+            doc.createParagraph().createRun().setText("Body");
+            bytes = documentBytes(doc);
+        }
+        var file = new MockMultipartFile("file", "unicode.docx", DOCX_CONTENT_TYPE, bytes);
+        ConversionResponse response = response(mvc.perform(multipart("/api/convert/md")
+                .file(file).param("splitByChapter", "true"))
+            .andExpect(status().isOk()).andReturn());
+        Map<String, byte[]> entries = unzip(download(response, "application/zip"));
+        String chapter = "01_" + "A".repeat(keptAscii) + "\uD83D\uDE00".repeat(keptEmoji) + ".md";
+        assertThat(entries).containsOnlyKeys("00_unicode.md", chapter);
+        assertThat(new String(entries.get(chapter), StandardCharsets.UTF_8)).contains(title, "Body");
+        String cover = new String(entries.get("00_unicode.md"), StandardCharsets.UTF_8);
+        var html = Jsoup.parseBodyFragment(new com.md2docu.service.MarkdownService().toHtml(cover, false, false));
+        assertThat(java.net.URI.create(html.selectFirst("a").attr("href")).getPath()).isEqualTo(chapter);
+        assertThat(response.warnings()).isEmpty();
     }
 
     @Test

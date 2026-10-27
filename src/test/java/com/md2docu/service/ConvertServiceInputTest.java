@@ -18,7 +18,6 @@ import org.springframework.web.server.ResponseStatusException;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.net.http.HttpClient;
@@ -27,7 +26,11 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Flow;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import java.util.zip.ZipInputStream;
@@ -171,8 +174,9 @@ class ConvertServiceInputTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void distinguishesUpstreamIoFromTimeout(boolean timeout) throws Exception {
-        when(client.send(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
-            .thenThrow(timeout ? new HttpTimeoutException("timeout") : new IOException("connection failed"));
+        when(client.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<byte[]>>any()))
+            .thenReturn(CompletableFuture.failedFuture(
+                timeout ? new HttpTimeoutException("timeout") : new IOException("connection failed")));
         assertStatus(() -> service.convertUrl("http://8.8.8.8/Document.md", "docx", options), timeout ? 504 : 502);
     }
 
@@ -260,12 +264,15 @@ class ConvertServiceInputTest {
 
     @Test
     void restoresInterruptFlagAndDoesNotMisclassifyCancellationAsBadInput() throws Exception {
-        when(client.send(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
-            .thenThrow(new InterruptedException("cancelled"));
+        CompletableFuture<HttpResponse<byte[]>> pending = new CompletableFuture<>();
+        when(client.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<byte[]>>any()))
+            .thenReturn(pending);
         try {
+            Thread.currentThread().interrupt();
             assertThatThrownBy(() -> service.convertUrl("http://8.8.8.8/Document.md", "docx", options))
                 .isInstanceOf(IOException.class).hasCauseInstanceOf(InterruptedException.class);
             assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(pending.isCancelled()).isTrue();
         } finally {
             Thread.interrupted();
         }
@@ -292,11 +299,30 @@ class ConvertServiceInputTest {
 
     @SuppressWarnings("unchecked")
     private void remote(int status, byte[] content) throws Exception {
-        HttpResponse<InputStream> response = mock(HttpResponse.class);
-        when(response.statusCode()).thenReturn(status);
-        when(response.body()).thenReturn(new ByteArrayInputStream(content));
-        when(client.send(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
-            .thenReturn(response);
+        when(client.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<byte[]>>any()))
+            .thenAnswer(invocation -> {
+                HttpResponse.BodyHandler<byte[]> handler = invocation.getArgument(1);
+                HttpResponse.ResponseInfo info = mock(HttpResponse.ResponseInfo.class);
+                when(info.statusCode()).thenReturn(status);
+                try {
+                    HttpResponse.BodySubscriber<byte[]> subscriber = handler.apply(info);
+                    Flow.Subscription subscription = mock(Flow.Subscription.class);
+                    subscriber.onSubscribe(subscription);
+                    for (int offset = 0; offset < content.length; offset += 65536) {
+                        subscriber.onNext(List.of(ByteBuffer.wrap(content, offset,
+                            Math.min(65536, content.length - offset)).asReadOnlyBuffer()));
+                    }
+                    subscriber.onComplete();
+                    if (content.length > 10 * 1024 * 1024) verify(subscription).cancel();
+                    return subscriber.getBody().thenApply(bytes -> {
+                        HttpResponse<byte[]> response = mock(HttpResponse.class);
+                        when(response.body()).thenReturn(bytes);
+                        return response;
+                    }).toCompletableFuture();
+                } catch (ResponseStatusException exception) {
+                    return CompletableFuture.failedFuture(exception);
+                }
+            });
     }
 
     private byte[] zip(String name, byte[] content) throws IOException {

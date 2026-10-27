@@ -346,16 +346,21 @@ class PdfConverterTest {
     void createsATocDestinationAtTheActualHeading(boolean hasH1) throws IOException {
         options.setGenerateToc(true);
         options.setNumberHeadings(true);
-        String markdown = (hasH1 ? "# Document\n\n" : "") + "Filler paragraph.\n\n".repeat(45)
+        String markdown = (hasH1 ? "# Document\n\n" : "") + "[Original link](#destination)\n\n"
+            + "Filler paragraph.\n\n".repeat(45)
             + "## Destination\n\nChapter body.";
         String html = new MarkdownService().toHtml(markdown, true, true);
 
         try (PDDocument pdf = convert(html)) {
             assertThat(pdf.getNumberOfPages()).isGreaterThan(1);
-            assertThat(internalTargets(pdf)).hasSize(1);
+            assertThat(internalTargets(pdf)).hasSize(2);
             PDPageXYZDestination destination = internalTargets(pdf).getFirst();
             int pageIndex = pdf.getPages().indexOf(destination.getPage());
             assertThat(pageIndex).isGreaterThan(0);
+            assertThat(internalTargets(pdf)).allSatisfy(target -> {
+                assertThat(target.getPage().getCOSObject()).isSameAs(destination.getPage().getCOSObject());
+                assertThat(target.getTop()).isEqualTo(destination.getTop());
+            });
 
             List<Float> headingBaselines = new ArrayList<>();
             PDFTextStripper stripper = new PDFTextStripper() {

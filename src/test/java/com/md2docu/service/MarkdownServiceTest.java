@@ -72,6 +72,29 @@ class MarkdownServiceTest {
             Stream.of(false, true).map(numbers -> Arguments.of(toc, numbers)));
     }
 
+    @ParameterizedTest
+    @MethodSource("formatOptions")
+    void preservesOriginalHeadingIdsAndLinksWithEveryOptionCombination(boolean toc, boolean numbers) {
+        String source = "[Jump](#target)\n\n[Duplicate](#target-1)\n\n# Title\n\n## Target\n\n"
+            + "> ## Nested\n\n## Target\n\nSetext\n------";
+        Document baseline = render(source, false, false);
+        Document html = render(source, toc, numbers);
+        assertThat(html.select("h1,h2").eachAttr("id")).containsExactlyElementsOf(
+            baseline.select("h1,h2").eachAttr("id"));
+        for (Element link : html.select("a[href^='#']")) {
+            assertThat(html.getElementById(link.attr("href").substring(1))).isNotNull();
+        }
+        if (toc) assertTocTargets(html, 3);
+    }
+
+    @Test
+    void avoidsAnExistingHtmlIdWhenTheGeneratedHeadingIdCollides() {
+        Document html = render("<p id='target'>Original target</p>\n\n## Target", true, true);
+        assertThat(html.select("[id]").eachAttr("id")).doesNotHaveDuplicates();
+        assertThat(html.getElementById("target").text()).isEqualTo("Original target");
+        assertTocTargets(html, 1);
+    }
+
     @Test
     void assignsUniqueIdsWithoutCollidingWithExistingHtmlIds() {
         Document html = render("<p id=\"toc-1\">Existing</p>\n\n# toc-2\n\n"

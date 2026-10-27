@@ -173,7 +173,7 @@ class PdfConverterTest {
         try (PDDocument pdf = convert("<img src='" + src + "'>")) {
             assertThat(images(pdf)).isEmpty();
             assertThat(warnings).singleElement().satisfies(warning -> {
-                assertThat(warning.getType()).isEqualTo("IMAGE_FETCH_FAILED");
+                assertThat(warning.getType()).isEqualTo("IMAGE_INVALID_DATA");
                 assertThat(warning.getTarget()).isEqualTo(src);
             });
         }

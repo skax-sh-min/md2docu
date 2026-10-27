@@ -120,7 +120,7 @@ public class PdfConverter {
             } else if (!isAllowedImageUri(uri, src)) {
                 warnings.add(ConvertWarning.unsupportedResource(src));
             } else {
-                String resolvedSrc = uri.getScheme() == null ? src
+                String resolvedSrc = uri == null || uri.getScheme() == null ? src
                     : uri.getScheme().toLowerCase(Locale.ROOT) + src.substring(src.indexOf(':'));
                 dataUri = imageResolver.resolveToBase64DataUri(resolvedSrc, imagePaths, warnings,
                     options.getRemoteImageTimeout());
@@ -128,12 +128,14 @@ public class PdfConverter {
 
             if (dataUri != null) {
                 image.attr("src", dataUri);
+                Element table = image.closest("table");
+                if (table != null) table.addClass("image-table");
             } else {
                 if (warnings.size() == warningCount) {
                     warnings.add(ConvertWarning.imageNotFound(src));
                 }
                 image.replaceWith(new Element("span").addClass("img-error")
-                    .text("[이미지 로드 실패: " + src + "]"));
+                    .text("[이미지 로드 실패: " + ConvertWarning.imageTarget(src) + "]"));
             }
         }
     }
@@ -173,6 +175,12 @@ public class PdfConverter {
     }
 
     private boolean isAllowedImageUri(URI uri, String src) {
+        if (src.regionMatches(true, 0, "data:", 0, 5)) {
+            int comma = src.indexOf(',');
+            if (comma < 0) return false;
+            String header = src.substring(0, comma).toLowerCase(Locale.ROOT);
+            return header.startsWith("data:image/") && header.endsWith(";base64");
+        }
         if (uri == null) return false;
         if (uri.getScheme() == null) {
             return uri.getRawAuthority() == null && uri.getPath() != null && !uri.getPath().isEmpty();
@@ -180,12 +188,6 @@ public class PdfConverter {
         String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
         if ("http".equals(scheme) || "https".equals(scheme)) {
             return hasAllowedHost(uri);
-        }
-        if ("data".equals(scheme)) {
-            int comma = src.indexOf(',');
-            if (comma < 0) return false;
-            String header = src.substring(0, comma).toLowerCase(Locale.ROOT);
-            return header.startsWith("data:image/") && header.endsWith(";base64");
         }
         return false;
     }
@@ -218,6 +220,9 @@ public class PdfConverter {
     private String buildCss(ConvertOptions options, UserSettings s) {
         String margin = s.getMarginTopMm() + "mm " + s.getMarginRightMm() + "mm "
                       + s.getMarginBottomMm() + "mm " + s.getMarginLeftMm() + "mm";
+        double pageHeight = "LETTER".equalsIgnoreCase(options.getPageSize()) ? 792 : 841.9;
+        double imageHeight = Math.max(1, pageHeight
+            - (s.getMarginTopMm() + s.getMarginBottomMm()) * 72.0 / 25.4 - 16);
         return "@page { size: " + options.getPageSize().toUpperCase() + "; margin: " + margin + "; }\n"
             + "body { font-family: " + s.getBodyFontFamily() + "; font-size: " + s.getBodyFontSizePt() + "pt; line-height: " + s.getLineHeight() + "; color: #333; }\n"
             + "h1 { font-size: " + s.getH1FontSizePt() + "pt; }\n"
@@ -225,7 +230,9 @@ public class PdfConverter {
             + "h3 { font-size: " + s.getH3FontSizePt() + "pt; }\n"
             + "h4, h5, h6 { font-size: " + s.getH4FontSizePt() + "pt; }\n"
             + "pre, code { font-size: " + s.getCodeFontSizePt() + "pt; }\n"
-            + PDF_STATIC_CSS;
+            + PDF_STATIC_CSS
+            + "\n.image-table { table-layout: fixed; }\n"
+            + "\nimg { max-height: " + imageHeight + "pt; }\n";
     }
 
 }

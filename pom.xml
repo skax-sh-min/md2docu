@@ -22,6 +22,8 @@
         <openhtmltopdf.version>1.1.100</openhtmltopdf.version>
         <xalan.version>2.7.3</xalan.version>
         <poi.version>6.0.0</poi.version>
+        <batik.version>1.20</batik.version>
+        <twelvemonkeys.version>3.15.3</twelvemonkeys.version>
         <!-- Keep POI 6's declared Log4j version from being downgraded by the Boot BOM. -->
         <log4j2.version>2.26.1</log4j2.version>
     </properties>
@@ -60,6 +62,29 @@
             <groupId>io.github.openhtmltopdf</groupId>
             <artifactId>openhtmltopdf-svg-support</artifactId>
             <version>${openhtmltopdf.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.apache.xmlgraphics</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- Shared SVG/WebP rasterization for PDF and DOCX -->
+        <dependency>
+            <groupId>org.apache.xmlgraphics</groupId>
+            <artifactId>batik-transcoder</artifactId>
+            <version>${batik.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.xmlgraphics</groupId>
+            <artifactId>batik-codec</artifactId>
+            <version>${batik.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.twelvemonkeys.imageio</groupId>
+            <artifactId>imageio-webp</artifactId>
+            <version>${twelvemonkeys.version}</version>
         </dependency>
 
         <!-- DOCX generation -->

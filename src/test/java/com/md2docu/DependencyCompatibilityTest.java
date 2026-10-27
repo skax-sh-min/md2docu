@@ -400,6 +400,49 @@ class DependencyCompatibilityTest {
         assertArchiveCleanedUp();
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"pdf", "docx"})
+    void convertsSvgAndWebpAndReturnsTheSameImageWarningThroughBothApis(String format) throws Exception {
+        String invalid = "data:image/png;base64,invalid-base64";
+        String markdown = "![svg](" + TestImages.dataUri(TestImages.bytes(TestImages.Format.SVG))
+            + ")\n\n![webp](" + TestImages.dataUri(TestImages.bytes(TestImages.Format.WEBP))
+            + ")\n\n![invalid](" + invalid + ")";
+        ConversionResponse response = response(mvc.perform(post("/api/convert/" + format + "/text")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsBytes(Map.of("markdown", markdown))))
+            .andExpect(status().isOk()).andReturn());
+        assertThat(response.warnings()).singleElement().satisfies(warning -> {
+            assertThat(warning.get("type")).isEqualTo("IMAGE_INVALID_DATA");
+            assertThat(warning.get("target")).isEqualTo(invalid);
+        });
+        mvc.perform(get("/api/convert/" + response.jobId() + "/warnings"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].type").value("IMAGE_INVALID_DATA"))
+            .andExpect(jsonPath("$[0].target").value(invalid));
+        if ("docx".equals(format)) {
+            try (var document = new XWPFDocument(new ByteArrayInputStream(download(response, DOCX_CONTENT_TYPE)))) {
+                assertThat(document.getParagraphs().stream().flatMap(p -> p.getRuns().stream())
+                    .mapToInt(r -> r.getEmbeddedPictures().size()).sum()).isEqualTo(2);
+                assertThat(document.getAllPictures()).allSatisfy(p ->
+                    assertThat(p.getPackagePart().getContentType()).isEqualTo("image/png"));
+            }
+        } else {
+            try (var document = Loader.loadPDF(download(response, MediaType.APPLICATION_PDF_VALUE))) {
+                List<PDImageXObject> images = new ArrayList<>();
+                for (var page : document.getPages()) {
+                    for (var name : page.getResources().getXObjectNames()) {
+                        if (page.getResources().getXObject(name) instanceof PDImageXObject image) images.add(image);
+                    }
+                }
+                assertThat(images).hasSizeBetween(1, 2).allSatisfy(image -> {
+                    assertThat(image.getWidth()).isEqualTo(16);
+                    assertThat(image.getHeight()).isEqualTo(10);
+                });
+            }
+        }
+    }
+
     private ConversionResponse convertArchive(String format, Map<String, byte[]> entries) throws Exception {
         MockMultipartFile file = new MockMultipartFile("file", "document.zip", "application/zip", zip(entries));
         return response(mvc.perform(multipart("/api/convert/" + format).file(file))

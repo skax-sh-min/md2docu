@@ -5,6 +5,8 @@ import com.md2docu.model.ConvertWarning;
 import com.md2docu.model.UserSettings;
 import com.md2docu.util.ImageResolver;
 import com.md2docu.util.ImageResolver.LocalImagePaths;
+import com.md2docu.util.ImageResolver.ResolvedImage;
+import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
 import org.apache.poi.util.Units;
 import org.apache.poi.xwpf.usermodel.*;
 import org.jsoup.Jsoup;
@@ -15,13 +17,11 @@ import org.jsoup.nodes.TextNode;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
 import org.springframework.stereotype.Service;
 
-import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.util.List;
-import javax.imageio.ImageIO;
 
 @Service
 public class DocxConverter {
@@ -33,8 +33,6 @@ public class DocxConverter {
     private static final double IMG_PX_TO_PT         = 0.75;
     private static final double IMG_MAX_WIDTH_PT     = 400.0;
     private static final double IMG_MAX_HEIGHT_PT    = 550.0;
-    private static final int    IMG_FALLBACK_W_PT    = 400;
-    private static final int    IMG_FALLBACK_H_PT    = 300;
 
     public DocxConverter(ImageResolver imageResolver, UserSettingsService settingsService) {
         this.imageResolver = imageResolver;
@@ -327,6 +325,8 @@ public class DocxConverter {
 
         XWPFTable table = doc.createTable(rows.size(), cols);
         table.setWidth("100%");
+        table.setCellMargins(0, Twips.CELL_MARGIN, 0, Twips.CELL_MARGIN);
+        int columnWidth = (int) (contentWidthTwips(doc) / cols);
 
         for (int r = 0; r < rows.size(); r++) {
             var cells = rows.get(r).select("th, td");
@@ -336,13 +336,14 @@ public class DocxConverter {
             for (int c = 0; c < cells.size() && c < cols; c++) {
                 XWPFTableCell cell = row.getCell(c);
                 if (cell == null) cell = row.addNewTableCell();
+                cell.setWidth(Integer.toString(columnWidth));
 
                 XWPFParagraph p = cell.getParagraphs().get(0);
                 RunState state = isHeader ? new RunState().withBold(true) : new RunState();
                 processInlineNodes(doc, p, cells.get(c).childNodes(), options, imagePaths, warnings, state);
 
                 if (isHeader) {
-                    CTShd shd = cell.getCTTc().addNewTcPr().addNewShd();
+                    CTShd shd = cell.getCTTc().getTcPr().addNewShd();
                     shd.setFill("F0F0F0");
                     shd.setVal(STShd.CLEAR);
                 }
@@ -394,33 +395,49 @@ public class DocxConverter {
 
     private void embedImage(XWPFParagraph para, String src,
                             ConvertOptions options, LocalImagePaths imagePaths, List<ConvertWarning> warnings) {
+        ResolvedImage image = imageResolver.resolve(src, imagePaths, warnings, options.getRemoteImageTimeout());
+        if (image == null) {
+            para.createRun().setText("[이미지 로드 실패: " + ConvertWarning.imageTarget(src) + "]");
+            return;
+        }
         try {
-            byte[] bytes = imageResolver.resolveToBytes(src, imagePaths, warnings, options.getRemoteImageTimeout());
-            if (bytes == null) {
-                para.createRun().setText("[이미지 로드 실패: " + src + "]");
-                return;
-            }
-            int pictureType = imageResolver.detectPictureType(src);
-            int[] emu = calcImageEmu(bytes);
+            int[] emu = calcImageEmu(image, para);
             XWPFRun run = para.createRun();
-            run.addPicture(new ByteArrayInputStream(bytes), pictureType, src, emu[0], emu[1]);
-        } catch (Exception e) {
-            para.createRun().setText("[이미지 삽입 오류: " + src + "]");
+            run.addPicture(new ByteArrayInputStream(image.bytes()), image.pictureType(),
+                ConvertWarning.imageTarget(src), emu[0], emu[1]);
+        } catch (IOException | InvalidFormatException | IllegalArgumentException e) {
+            warnings.add(ConvertWarning.imageEmbedFailed(src));
+            para.createRun().setText("[이미지 로드 실패: " + ConvertWarning.imageTarget(src) + "]");
         }
     }
 
-    // 이미지 픽셀 → EMU 변환: 최대 400pt 너비/550pt 높이에 비율 유지
-    private int[] calcImageEmu(byte[] bytes) {
-        try {
-            BufferedImage img = ImageIO.read(new ByteArrayInputStream(bytes));
-            if (img != null && img.getWidth() > 0 && img.getHeight() > 0) {
-                double wPt = img.getWidth() * IMG_PX_TO_PT;
-                double hPt = img.getHeight() * IMG_PX_TO_PT;
-                double scale = Math.min(1.0, Math.min(IMG_MAX_WIDTH_PT / wPt, IMG_MAX_HEIGHT_PT / hPt));
-                return new int[]{Units.toEMU((int)(wPt * scale)), Units.toEMU((int)(hPt * scale))};
-            }
-        } catch (Exception ignored) {}
-        return new int[]{Units.toEMU(IMG_FALLBACK_W_PT), Units.toEMU(IMG_FALLBACK_H_PT)};
+    private int[] calcImageEmu(ResolvedImage image, XWPFParagraph paragraph) {
+        XWPFDocument doc = paragraph.getDocument();
+        double widthTwips = contentWidthTwips(doc);
+        if (paragraph.getBody() instanceof XWPFTableCell cell) {
+            widthTwips = Math.min(widthTwips, cell.getWidth() - 2.0 * Twips.CELL_MARGIN);
+        }
+        widthTwips -= Math.max(0, paragraph.getIndentationLeft()) + Math.max(0, paragraph.getIndentationRight());
+        CTSectPr section = doc.getDocument().getBody().getSectPr();
+        double heightTwips = Double.parseDouble(section.getPgSz().getH().toString())
+            - Double.parseDouble(section.getPgMar().getTop().toString())
+            - Double.parseDouble(section.getPgMar().getBottom().toString());
+        heightTwips -= Math.max(0, paragraph.getSpacingBefore()) + Math.max(0, paragraph.getSpacingAfter());
+        if (widthTwips <= 0 || heightTwips <= 0) {
+            throw new IllegalArgumentException("No page or cell area is available for the image");
+        }
+        double wPt = image.width() * IMG_PX_TO_PT;
+        double hPt = image.height() * IMG_PX_TO_PT;
+        double scale = Math.min(1.0, Math.min(Math.min(IMG_MAX_WIDTH_PT, widthTwips / 20) / wPt,
+            Math.min(IMG_MAX_HEIGHT_PT, heightTwips / 20) / hPt));
+        return new int[]{Math.max(1, Units.toEMU(wPt * scale)), Math.max(1, Units.toEMU(hPt * scale))};
+    }
+
+    private double contentWidthTwips(XWPFDocument doc) {
+        CTSectPr section = doc.getDocument().getBody().getSectPr();
+        return Double.parseDouble(section.getPgSz().getW().toString())
+            - Double.parseDouble(section.getPgMar().getLeft().toString())
+            - Double.parseDouble(section.getPgMar().getRight().toString());
     }
 
     // ── 하이퍼링크 ────────────────────────────────────────────────────────────
@@ -557,6 +574,7 @@ public class DocxConverter {
         static final int LETTER_HEIGHT     = 15840; // 11 in
         static final int BORDER_QUOTE_SZ   = 16;    // 인용문 왼쪽 선 굵기 (1/8pt)
         static final int BORDER_HR_SZ      = 6;     // 수평선 굵기 (1/8pt)
+        static final int CELL_MARGIN       = 108;
     }
 
     // ── RunState (불변 포맷 상태) ─────────────────────────────────────────────

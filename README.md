@@ -289,6 +289,8 @@ PDF 외부 링크는 HTTP(S)·mailto·FTP를 허용합니다. `file:`·`jar:`·�
 | multipart 요청 최대 크기 | 210MB | `spring.servlet.multipart.max-request-size` |
 | ZIP 압축 해제 최대 크기 | 350MB | `app.zip.max-extract-bytes` |
 | URL 다운로드 최대 크기 | 10MB | 현재 코드 상수 |
+| 이미지 한 개의 바이트 크기 | 50MiB (52,428,800바이트) | 로컬·HTTP(S)·Base64 공통 상수 |
+| 이미지 한 개의 픽셀 수 | 6,000,000픽셀 | 너비 × 높이, SVG 출력에도 적용 |
 | 결과 보관 TTL | 3600초 | `app.convert.temp-expiry-seconds` |
 | 결과 보관 개수 | 최대 500개를 목표로 퇴출 | 메모리 보관, 총 바이트 용량 제한은 없음 |
 
@@ -306,10 +308,27 @@ java -jar .\target\md2docu-0.1.4-SNAPSHOT.jar `
 - 로컬 이미지는 ZIP과 함께 업로드합니다. 서버의 임의 절대 경로를 읽는 기능은 아닙니다.
 - 상대 이미지 경로는 선택된 Markdown의 부모 폴더를 기준으로 해석합니다. `../`도 ZIP 범위 안에서만 허용합니다.
 - `/images/fig.png` 형식은 ZIP 루트 기준 참조로 처리합니다.
-- 원격 HTTP(S) 이미지와 Base64 이미지 해석 경로가 있으나 형식 및 출력 방식별 제한이 있습니다.
-- 이미지 실패는 가능한 경우 플레이스홀더와 `warnings`로 보고하지만, 현재 일부 누락 경로에는 경고도 빠질 수 있습니다.
+- 로컬·HTTP(S)·Base64 모두 바이트 내용으로 이미지 형식을 판별합니다. 확장자가 없거나 잘못되어도 처리하며, 선언된 MIME과 HTTP Content-Type은 보조 정보로만 사용합니다.
+- PNG/JPEG/GIF/BMP를 지원하고, **SVG/WebP는 PNG로 변환**해 PDF와 DOCX에 넣습니다. DOCX에는 GIF 원본을 보존하고, PDF에는 색상 손실을 피하도록 첫 프레임을 PNG로 넣습니다. WebP도 첫 프레임을 사용하며 애니메이션 재생은 보장하지 않습니다. BMP는 POI와 동일한 `image/x-ms-bmp` MIME을 사용합니다.
+- SVG는 정적 도형을 래스터화합니다. 스크립트를 실행하지 않고 DTD·외부 엔티티를 거부합니다. 외부 파일·URL·임베디드 이미지·외부 글꼴 참조와 `foreignObject`는 지원하지 않으며, 필요한 리소스를 읽지 못한 SVG를 성공한 이미지로 반환하지 않습니다.
+- 모든 경로에 **50MiB 및 600만 픽셀** 제한을 적용합니다. 3000×2000에 상응하는 픽셀 수 상한으로, 2000×3000 같은 세로 이미지도 허용합니다. 한도 초과 이미지를 자동 축소해 받아들이지는 않으며 경고와 플레이스홀더로 알립니다.
+- DOCX 이미지는 기존 400pt 너비·550pt 높이 상한과 실제 페이지 본문·목록 들여쓰기·표 셀의 안쪽 폭을 함께 고려해 종횡비를 유지합니다. PDF도 본문 높이와 표 셀 폭 안에서 비율을 유지하며, 이미지가 들어간 표는 고정 열 배치로 폭 넘침을 방지합니다.
+- 이미지 실패는 표시 위치에 `[이미지 로드 실패: ...]`를 넣고 해당 원인을 한 번 경고합니다. 긴 주소·data URI는 경고 대상과 플레이스홀더에서 최대 256자로 줄입니다. 이미지 포함 옵션을 끈 경우는 의도된 제외이므로 실패 경고를 만들지 않습니다.
 
-PDF는 HTML 정제를 유지하면서 이미지 주소를 검증·해석하며, HTML 엔티티를 처리합니다. 로컬 파일명의 URL 디코딩은 PDF·DOCX의 공통 이미지 해석기에서 수행합니다. 주소 해석 단계의 누락·로드 실패는 플레이스홀더와 경고로 알리고, 미지원 이미지 주소는 `UNSUPPORTED_RESOURCE`로 보고합니다. 기존 ZIP 경로 범위와 원격 이미지 주소 제한은 유지합니다. 이미지 타입 판별·손상 데이터·형식별 지원의 전체 개선은 [PLAN.md](PLAN.md)의 B06에 남아 있습니다.
+PDF는 HTML 정제와 주소 검증을 유지하고, 로컬 파일명의 URL 디코딩은 PDF·DOCX의 공통 이미지 해석기에서 수행합니다. 기존 ZIP 경로 범위와 원격 이미지 주소 제한은 유지합니다.
+
+| 경고 코드 | 의미 |
+|-----------|------|
+| `IMAGE_NOT_FOUND` | 로컬 파일 누락·기준 폴더 없음·허용 범위 밖 경로 |
+| `IMAGE_FETCH_FAILED` | 원격 다운로드 실패·원격 주소 접근 제한 |
+| `IMAGE_INVALID_DATA` | 잘못된 Base64·손상된 이미지·잘못된 SVG XML |
+| `IMAGE_UNSUPPORTED_FORMAT` | TIFF 등 지원 목록 밖이거나 식별할 수 없는 형식 |
+| `IMAGE_TOO_LARGE` | 50MiB 또는 600만 픽셀 초과 |
+| `IMAGE_CONVERSION_FAILED` | SVG/PNG 변환 실패·차단된 SVG 리소스·미지원 SVG 내용 |
+| `IMAGE_EMBED_FAILED` | DOCX 삽입 실패·이미지를 배치할 본문/셀 영역 없음 |
+| `UNSUPPORTED_RESOURCE` | 지원하지 않는 리소스 주소·data URI 헤더 |
+
+잘못된 Base64는 기존의 포괄적인 `IMAGE_FETCH_FAILED` 대신 `IMAGE_INVALID_DATA`로 보고합니다.
 
 PDF 글꼴은 [application.properties](src/main/resources/application.properties)의 `app.pdf.font.paths`에 지정한 `경로|패밀리명` 목록에서 존재하는 파일을 감지합니다. Windows 맑은 고딕과 Linux Noto Sans CJK 등의 기본 후보가 있지만 서버 환경에 맞는 실제 경로를 설정해야 합니다.
 
@@ -322,7 +341,7 @@ java -jar .\target\md2docu-0.1.4-SNAPSHOT.jar `
 
 ## 기술 스택과 의존성 업데이트
 
-**2026-10-26 확인 기준**이며, Maven Central의 정식 릴리스와 Bootstrap의 npm `latest`를 기준으로 업데이트했습니다. RC·베타·스냅샷은 적용하지 않았습니다.
+기존 라이브러리는 **2026-10-26**, SVG/WebP 라이브러리는 **2026-10-27 확인 기준**입니다. Maven Central의 정식 릴리스와 Bootstrap의 npm `latest`를 기준으로 업데이트했으며, RC·베타·스냅샷은 적용하지 않았습니다.
 
 | 역할 | 라이브러리 | 적용 버전 |
 |------|------------|-----------|
@@ -332,6 +351,8 @@ java -jar .\target\md2docu-0.1.4-SNAPSHOT.jar `
 | Markdown | [flexmark-java](https://github.com/vsch/flexmark-java) | 0.64.8 |
 | PDF | [openhtmltopdf community fork](https://github.com/openhtmltopdf/openhtmltopdf) | 1.1.100, PDFBox 3.0.8 |
 | DOCX | [Apache POI](https://poi.apache.org/) | 6.0.0 |
+| SVG 래스터화 | [Apache Batik](https://xmlgraphics.apache.org/batik/) | 1.20, XML Graphics Commons 2.12 |
+| WebP 디코더 | [TwelveMonkeys ImageIO](https://github.com/haraldk/TwelveMonkeys) | 3.15.3 |
 | HTML | [jsoup](https://jsoup.org/) | 1.23.2 |
 | 파일 I/O | Apache Commons IO | 2.22.0 |
 | XSLT | Xalan / Serializer | 2.7.3 |
@@ -344,6 +365,7 @@ java -jar .\target\md2docu-0.1.4-SNAPSHOT.jar `
 - Spring Boot가 관리하는 전이 의존성과 Maven 플러그인은 기본적으로 Boot BOM·부모 POM을 따릅니다.
 - Log4j는 POI 6이 선언한 버전보다 낮아지지 않도록 `log4j2.version`으로 맞췄습니다.
 - PDF 모듈 두 개는 `openhtmltopdf.version` 하나로 버전을 맞춥니다.
+- Batik 모듈은 `batik.version`으로 맞추고 PDF SVG 모듈의 구형 전이 의존성을 제외합니다. TwelveMonkeys 모듈은 `twelvemonkeys.version`으로 맞춥니다.
 - POI 모듈은 `poi.version`으로 맞추고, 다단계 번호 정의에 필요한 전체 스키마인 `poi-ooxml-full`을 사용합니다. 중복 스키마를 피하기 위해 `poi-ooxml-lite`는 제외합니다.
 - flexmark의 구형 PDF 변환 모듈 제외와 Xalan/Serializer 명시 버전은 유지합니다.
 - Jackson 3는 `tools.jackson` 패키지를 사용하지만 `jackson-annotations`는 공식 정책에 따라 2.x의 `com.fasterxml.jackson.annotation`을 사용합니다.
@@ -353,6 +375,8 @@ java -jar .\target\md2docu-0.1.4-SNAPSHOT.jar `
 
 - [Spring Boot Maven metadata](https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-starter-parent/maven-metadata.xml)
 - [Apache POI Maven metadata](https://repo.maven.apache.org/maven2/org/apache/poi/poi-ooxml/maven-metadata.xml)
+- [Batik Maven metadata](https://repo.maven.apache.org/maven2/org/apache/xmlgraphics/batik-transcoder/maven-metadata.xml)
+- [TwelveMonkeys WebP Maven metadata](https://repo.maven.apache.org/maven2/com/twelvemonkeys/imageio/imageio-webp/maven-metadata.xml)
 - [openhtmltopdf 릴리스](https://github.com/openhtmltopdf/openhtmltopdf/releases)
 - [jsoup 1.23.2 릴리스](https://jsoup.org/news/release-1.23.2)
 - [Lombok 변경 이력](https://projectlombok.org/changelog)
@@ -379,17 +403,22 @@ mvn "-Dtest=DocxToMarkdownConverterTest" test
 # ZIP 이미지 경로와 API 호환성 테스트
 mvn "-Dtest=ImageResolverTest,DependencyCompatibilityTest" test
 
+# 이미지 형식·한도·경고와 실제 PDF/DOCX 이미지 검증
+mvn "-Dtest=ImageResolverFormatsTest,ImageConversionTest" test
+
 # 실제 해석된 의존성 버전 확인
 mvn dependency:list
 ```
 
-2026-10-27 기준 **255개 테스트 통과**: 호환성 80개, DOCX 구조 27개, DOCX 역변환 42개, Markdown 32개, PDF 회귀 49개, 설정 9개, 이미지 경로 16개.
+2026-10-27 기준 **330개 테스트 통과**: 호환성 82개, DOCX 구조 27개, DOCX 역변환 42개, Markdown 32개, PDF 회귀 49개, 설정 9개, 이미지 경로 16개, 이미지 형식·한도 53개, 이미지 출력 20개.
 
 - Spring Boot 4 애플리케이션 컨텍스트, MVC·Thymeleaf·JSON 응답
 - H1 유무·목차/번호 옵션 조합, Setext·단계 생략·중복 ID, 인라인 서식·엔티티·코드 블록 보존
 - PDF/DOCX 변환 API의 제목·목차 표시와 내부 대상 대응, DOCX 제목 북마크·링크, 미리보기 번호 옵션
 - 실제 PDF 생성 및 위치 정렬한 텍스트 추출
 - 동일 PNG의 로컬·HTTP(S)·Base64 입력에 대한 PDF 이미지 객체·픽셀 검증
+- PNG/JPEG/GIF/BMP/SVG/WebP의 로컬·원격·Base64 교차 판별, 실제 DOCX 미디어 타입과 PDF 픽셀·비율·본문/셀 폭 검증
+- 50MiB·600만 픽셀 경계, 잘못된 확장자·MIME·Base64, SVG 외부 접근 차단, 실패별 단일 경고와 API 경고 조회
 - PDF 목차의 실제 대상 페이지·위치, 링크 전략·앵커 ID 보존, URI·HTML 엔티티, 누락·미지원 주소 경고
 - ZIP → PDF의 이미지·목차·첨부 경고 및 기존 경로·원격 주소 접근 제한 유지
 - 루트·중첩 ZIP의 PDF/DOCX 이미지 바이트·픽셀, 문서 상대·루트·상위 경로, 인코딩된 파일명과 경계 차단
@@ -410,7 +439,7 @@ mvn dependency:list
 다음 개선 과제가 남아 있습니다.
 
 - DOCX의 미지원 편집 구조·병합 레이아웃·페이지 배치까지 역변환하지는 않습니다. Markdown → DOCX의 링크 내부 이미지·로컬 링크 보존도 개선이 필요합니다.
-- 이미지 타입 추정과 일부 실패 경고, 설정의 형식별 반영, API 옵션 처리에 차이가 있습니다.
+- 설정의 형식별 반영과 API 옵션 처리에 차이가 있습니다.
 - 미리보기는 최종 출력과 같지 않으며 응답 순서 역전 및 오류 표시 개선이 필요합니다.
 - 결과 만료·용량·동시성 정책과 실제 글꼴 기반 경고는 추가 개선이 필요합니다.
 

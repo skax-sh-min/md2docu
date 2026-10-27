@@ -830,6 +830,21 @@ class DependencyCompatibilityTest {
         assertArchiveCleanedUp();
     }
 
+    @Test
+    void keepsKoreanPdfAvailableWithMatchingEnvironmentAndConversionWarningsWithoutFonts() throws Exception {
+        mvc.perform(get("/api/system/info")).andExpect(status().isOk())
+            .andExpect(jsonPath("$.pdfKoreanWarning").value(true))
+            .andExpect(jsonPath("$.pdfFonts.fonts").isEmpty());
+        ConversionResponse result = convertText("pdf", "한글 본문");
+        assertThat(result.warnings()).singleElement().satisfies(warning ->
+            assertThat(warning).containsEntry("type", "PDF_KOREAN_FONT_UNAVAILABLE"));
+        mvc.perform(get("/api/convert/" + result.jobId() + "/warnings")).andExpect(status().isOk())
+            .andExpect(content().json(mapper.writeValueAsString(result.warnings())));
+        try (var document = Loader.loadPDF(download(result, MediaType.APPLICATION_PDF_VALUE))) {
+            assertThat(document.getNumberOfPages()).isEqualTo(1);
+        }
+    }
+
     private ConversionResponse convertText(String format, String markdown) throws Exception {
         return response(mvc.perform(post("/api/convert/" + format + "/text")
                 .contentType(MediaType.APPLICATION_JSON)

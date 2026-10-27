@@ -177,11 +177,11 @@ MD 파일만 업로드하면 함께 저장된 로컬 PNG를 읽을 수 없습니
 | GET | `/api/download/{jobId}` | 결과 다운로드 |
 | GET | `/api/convert/{jobId}/warnings` | 경고 조회 |
 | POST | `/api/preview` | JSON Markdown → HTML 미리보기 |
-| GET | `/api/system/info` | PDF 한글 경고 여부 |
+| GET | `/api/system/info` | 실제 PDF 글꼴 검사 결과·한글 샘플 지원·진단 |
 | GET / PUT | `/api/settings` | 출력 설정 조회·저장 |
 | GET | `/api/settings/defaults` | 서버 기본 출력 설정 조회, 저장하지 않음 |
 | POST | `/api/settings/reset` | 기본 출력 설정으로 저장·복원 |
-| GET | `/api/settings/fonts` | 설정 경로에서 감지된 글꼴 패밀리 |
+| GET | `/api/settings/fonts` | 실제 PDF 로딩 검사를 통과한 글꼴 패밀리 |
 
 `{format}`은 `pdf` 또는 `docx`입니다.
 
@@ -396,14 +396,49 @@ PDF는 HTML 정제와 주소 검증을 유지하고, 로컬 파일명의 URL 디
 
 잘못된 Base64는 기존의 포괄적인 `IMAGE_FETCH_FAILED` 대신 `IMAGE_INVALID_DATA`로 보고합니다.
 
-PDF 글꼴은 [application.properties](src/main/resources/application.properties)의 `app.pdf.font.paths`에 지정한 `경로|패밀리명` 목록에서 존재하는 파일을 감지합니다. Windows 맑은 고딕과 Linux Noto Sans CJK 등의 기본 후보가 있지만 서버 환경에 맞는 실제 경로를 설정해야 합니다.
+### PDF 글꼴 검사와 한글 안내
+
+[application.properties](src/main/resources/application.properties)의 `app.pdf.font.paths`에 `경로|패밀리명`을 쉼표로 구분해 지정합니다. **서버 시작 시 실제 PDFBox 로딩·임베딩 준비와 기본 한글 샘플 인코딩을 검사**하며, 파일 존재나 OS 이름만으로 지원 여부를 추정하지 않습니다. 기본 후보 경로가 있어도 해당 서버 계정이 읽을 수 있는 실제 파일을 설정해야 합니다.
+
+- TrueType 윤곽선의 TTF·TTC를 지원합니다. TTC는 각 글꼴 면을 따로 검사·등록하고, 메타데이터의 굵기와 기울임을 사용합니다. 같은 패밀리의 보통·굵은 TTF도 각각의 weight로 등록합니다.
+- CFF 윤곽선, 손상된 파일, 임베딩할 수 없는 글꼴 면은 제외하고 진단합니다. `.ttc`라는 확장자나 Noto라는 이름만으로 지원한다고 판단하지 않습니다. 일부 Noto Sans CJK 배포본은 CFF 컬렉션이므로 실제 검사 결과를 확인하고, 필요하면 사용 권한이 있는 TrueType 윤곽선 한글 글꼴을 지정하세요.
+- 기본 한글 샘플은 `가나다라마바사아자차카타파하한글힣`입니다. 샘플 통과는 해당 설정 후보의 제한된 검사 결과이며 **모든 한글·다른 문자·선택한 CSS 글꼴·최종 레이아웃의 표시 보장이 아닙니다**.
+- 본문 설정의 패밀리 목록에 등록한 별칭을 포함하세요. 코드 블록은 기존 Courier 계열 뒤에 본문 글꼴을 대체 글꼴로 연결해 한글을 표시합니다.
+- 글꼴 파일과 설정을 바꾼 뒤에는 서버를 재시작하세요. 시작 시 검사 결과와 변환 중 실제 로딩은 구분하며, 이후 파일 삭제·등록 실패는 변환 경고로 알립니다.
 
 ```powershell
+# Windows: 설치된 맑은 고딕의 보통·굵은 글꼴을 같은 패밀리로 등록
 java -jar .\target\md2docu-0.1.4-SNAPSHOT.jar `
-    "--app.pdf.font.paths=C:\Windows\Fonts\malgun.ttf|Malgun Gothic"
+    "--app.pdf.font.paths=C:\Windows\Fonts\malgun.ttf|Malgun Gothic,C:\Windows\Fonts\malgunbd.ttf|Malgun Gothic"
 ```
 
-글꼴 파일은 애플리케이션에 포함하지 않습니다. 글꼴 미설치·등록 실패·글리프 미지원 시 한글이 깨질 수 있습니다. 현재 UI의 한글 경고는 OS 기준 추정이며 실제 글꼴 지원 검사를 의미하지 않습니다.
+Linux는 사용 권한이 있는 TrueType 한글 글꼴을 시스템 패키지나 배포 과정에서 설치하고 실제 경로를 지정합니다. 예를 들어 NanumGothic TTF를 설치했다면 다음과 같이 기본 본문 패밀리 목록에 있는 별칭으로 등록할 수 있습니다. 경로는 배포판마다 다르며 이 예제는 설치 명령이나 파일 존재를 보장하지 않습니다.
+
+```sh
+java -jar target/md2docu-0.1.4-SNAPSHOT.jar \
+  "--app.pdf.font.paths=/usr/share/fonts/truetype/nanum/NanumGothic.ttf|Noto Sans CJK,/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf|Noto Sans CJK"
+```
+
+macOS도 설치된 한글 TTF·TrueType TTC의 실제 경로를 지정하고 서버 실행 계정의 읽기 권한을 확인하세요. 개발자 개인 홈 경로나 OS 기본 글꼴 이름만 믿고 배포하지 마세요. **글꼴 파일은 프로젝트에 포함하지 않으며 자동 설치·다운로드하지 않습니다.** 사용·임베딩 권한은 배포자가 확인해야 합니다.
+
+`GET /api/system/info`는 기존 boolean `pdfKoreanWarning`을 유지하며 다음 정보를 추가합니다. 경고 여부는 기본 한글 샘플을 지원하는 사용 가능한 면이 있는지로 계산합니다. 서버의 절대 파일 경로는 응답에 포함하지 않습니다.
+
+| 필드 | 의미 |
+|------|------|
+| `pdfFonts.checkedAt` | 시작 시 검사 시각 |
+| `pdfFonts.sample` | 검사한 한글 샘플 |
+| `pdfFonts.fonts` | 로딩 가능한 면의 `family`, `name`, `weight`, `style`, `koreanSampleSupported` |
+| `pdfFonts.issues` | 패밀리별 `NOT_FOUND`, `INVALID_CONFIGURATION`, `LOAD_FAILED` 진단 |
+| `verificationScope` | `configured-fonts-korean-sample`: 설정 후보·샘플 한정 검사 |
+
+PDF 선택 시 상태 확인 중·조회 실패·한글 글꼴 없음·샘플 확인 결과를 구분합니다. 환경 정보가 늦게 도착해도 현재 출력 형식을 다시 확인하며 DOCX에서는 숨깁니다. 샘플 확인 상태도 보장 문구 대신 검사 범위의 한계를 안내합니다.
+
+| 변환 경고 | 의미 |
+|-----------|------|
+| `PDF_FONT_UNAVAILABLE` | 잘못된/손상된 설정 글꼴 또는 변환 중 실제 로딩·등록 실패. 대상은 패밀리명 |
+| `PDF_KOREAN_FONT_UNAVAILABLE` | 원본 본문에 한글이 있지만 기본 샘플을 지원하는 글꼴이 등록되지 않음 |
+
+합의한 정책대로 글꼴 경고가 있어도 PDF 변환은 계속합니다. 결과의 한글이 누락될 수 있으므로 경고를 확인하고 글꼴을 설정하거나 DOCX를 사용하세요. 이미지 실패 등으로 자동 생성한 한글 안내문 때문에 원본이 영문인 문서에 추가 한글 경고를 만들지는 않습니다.
 
 ## 기술 스택과 의존성 업데이트
 
@@ -490,13 +525,21 @@ mvn "-Dtest=DependencyCompatibilityTest#rendersThymeleafPageWithMatchingBootstra
 # 실제 미리보기 JS 핸들러의 요청 경쟁·상태·재시도 회귀 테스트
 node --test src\test\js\preview.test.cjs
 
+# PDF 글꼴 검사·OS 독립 환경 API·한글 TTF/TTC 출력
+mvn "-Dtest=FontServiceTest,PdfFontsTest,PdfEnvironmentApiTest" test
+
+# 미리보기와 PDF 글꼴 환경 정보의 지연 응답·상태 테스트
+node --test src\test\js\preview.test.cjs src\test\js\pdf-environment.test.cjs
+
 # 실제 해석된 의존성 버전 확인
 mvn dependency:list
 ```
 
-2026-10-27 B10 완료 기준 **Java 전체 594개 테스트 통과**: 호환성 98개, 변환 API 계약 65개, 입력 검증 57개, 실제 HTTP 업로드 한도 4개, 결과 보관 31개, 보관/다운로드 API 13개, DOCX 구조 27개, DOCX 링크 52개, DOCX 역변환 42개, Markdown 32개, PDF 회귀 49개, 설정 저장 23개, 설정 API 5개, 출력 설정 7개, 이미지 경로 16개, 이미지 형식·한도 53개, 이미지 출력 20개. `mvn verify`와 실행 JAR 패키징을 확인했습니다.
+2026-10-27 B12 완료 기준 **Java 전체 624개 테스트 통과**: 호환성 99개, 변환 API 계약 65개, PDF 환경 API 10개, 글꼴 검사 12개, 한글 PDF 글꼴 출력 7개, 입력 검증 57개, 실제 HTTP 업로드 한도 4개, 결과 보관 31개, 보관/다운로드 API 13개, DOCX 구조 27개, DOCX 링크 52개, DOCX 역변환 42개, Markdown 32개, PDF 회귀 49개, 설정 저장 23개, 설정 API 5개, 출력 설정 7개, 이미지 경로 16개, 이미지 형식·한도 53개, 이미지 출력 20개. 실패·오류·건너뜀 없이 `mvn verify`와 실행 JAR 패키징을 확인했습니다.
 
-**B11 변경 후에는 관련 Java 67개와 미리보기 JavaScript 44개가 통과**했고 실행 JAR을 다시 패키징했습니다. 서버 구현은 변경하지 않아 Java 전체 대신 템플릿 렌더링·미리보기 API·변환 API 계약을 집중 검증했습니다. JavaScript 테스트는 [preview.test.cjs](src/test/js/preview.test.cjs)에 유지하며, 실제 템플릿의 핸들러를 읽어 타이머·DOM·fetch 대역과 지연 응답으로 검사합니다. Node.js 기본 테스트 러너를 사용하므로 별도 npm 패키지가 필요하지 않습니다(Node.js 22 이상 권장). 이 44개는 Maven 테스트 합계에 포함하지 않습니다.
+JavaScript는 **미리보기 44개와 PDF 환경 안내 22개, 총 66개**가 통과했습니다. [preview.test.cjs](src/test/js/preview.test.cjs)와 [pdf-environment.test.cjs](src/test/js/pdf-environment.test.cjs)는 실제 템플릿 핸들러를 읽어 타이머·DOM·fetch 대역과 지연 응답으로 검사합니다. Node.js 기본 테스트 러너를 사용하므로 별도 npm 패키지가 필요하지 않습니다(Node.js 22 이상 권장). 이 66개는 Maven 테스트 합계에 포함하지 않습니다.
+
+한글 TTF 보통·굵은 면과 TTC 출력 테스트는 설치된 글꼴을 사용하며 파일을 프로젝트에 복사하지 않습니다. 이번 Windows 환경에서는 맑은 고딕·굴림으로 모두 실행했고, 한글 본문·굵기·코드 블록의 추출 텍스트·임베딩·래스터 렌더링을 확인하고 생성 이미지도 시각 확인했습니다. 다른 환경에서는 `test.pdf.korean.regular`, `test.pdf.korean.bold`, `test.pdf.korean.collection` 시스템 속성으로 사용 권한이 있는 설치 글꼴 경로를 지정하세요. 해당 파일이 없으면 이 두 출력 테스트는 명시적으로 건너뜁니다. 선택적으로 `"-Dtest.pdf.render-preview=true"`를 추가하면 확인용 PNG를 빌드 출력에 생성합니다.
 
 - Spring Boot 4 애플리케이션 컨텍스트, MVC·Thymeleaf·JSON 응답
 - H1 유무·목차/번호 옵션 조합, Setext·단계 생략·중복 ID, 인라인 서식·엔티티·코드 블록 보존
@@ -530,11 +573,13 @@ mvn dependency:list
 - 설정 바인딩·잘못된 값의 시작 실패, 정확한 개수/바이트 경계와 초과 거부, 만료 우선·동일 시각 FIFO·다중 퇴출·외부 객체 수정 격리
 - 동시 저장·조회·정리 1,440회 쓰기에서 개수/총 바이트 상한과 실제 배열 길이 합계의 일치, HTTP 전송을 막아 둔 상태의 만료·퇴출 후 정상 다운로드 완료
 - 변환 응답의 `expiresAt`, 만료·퇴출 후 JSON 404, 단일 결과 초과의 JSON 413와 기존 결과 보존, 다운로드/경고의 캐시 금지
+- 실제 PDF 글꼴 로딩·한글 샘플 인코딩, 손상/누락/빈 TTC 진단·경로 비노출, TTF 보통/굵은 면과 TTC 개별 등록·한글 코드 블록
+- OS×글꼴 유무/한글 지원 조합의 동일한 환경 API, PDF 선택 전후의 지연 응답·조회 실패·잘못된 응답, 한글 글꼴 미등록 시 다운로드 유지와 응답/조회 경고 일치
 - 입력 직후·600ms 경계·수동 갱신·번호 변경의 요청 경쟁, 취소 준수/무시·응답/JSON 본문 역전, 오래된 성공/실패/finally/타이머의 최신 결과·오류·상태 보호
 - 잘못된 정상 응답 구조·HTTP 오류 본문·JSON·통신 오류, 빈 입력/HTML, 이전 결과 표시·초기 실패·재시도와 접근성 상태·옵션 범위 안내
 - 잘못된 입력과 설정 읽기·쓰기 실패의 오류 응답
 
-테스트는 실제 사용자 설정 대신 메모리 설정과 임시 파일을 사용합니다. 원격 이미지·URL 성공 경로와 실패는 외부 네트워크 없이 응답을 대체해 검증하고, 업로드 한도는 임시 로컬 서버로 확인합니다. 별도로 실제 JavaScript 핸들러를 DOM·fetch 대역에서 실행해 설정 모달 10개, 변환·미리보기·파일 선택·오류 처리 16개, 결과 보관 기한 표시·잘못된 만료 시각 거부 9개 시나리오를 확인했습니다. 위 미리보기 44개는 프로젝트에 유지하는 별도 Node 자동 테스트입니다. JavaScript 검사는 Maven 자동 테스트나 실제 브라우저 시각 검증은 아닙니다. 실제 원격 서버 다운로드, Word/LibreOffice의 표시, 한글 글꼴 조합, 부하 성능까지 검증한 것은 아닙니다.
+테스트는 실제 사용자 설정 대신 메모리 설정과 임시 파일을 사용합니다. 원격 이미지·URL 성공 경로와 실패는 외부 네트워크 없이 응답을 대체해 검증하고, 업로드 한도는 임시 로컬 서버로 확인합니다. 별도로 실제 JavaScript 핸들러를 DOM·fetch 대역에서 실행해 설정 모달 10개, 변환·미리보기·파일 선택·오류 처리 16개, 결과 보관 기한 표시·잘못된 만료 시각 거부 9개 시나리오를 확인했습니다. 위 JavaScript 66개는 프로젝트에 유지하는 별도 Node 자동 테스트이며 실제 브라우저 시각 검증은 아닙니다. 실제 원격 서버 다운로드, Word/LibreOffice의 표시, 모든 한글 글꼴·문자 조합, 부하 성능까지 검증한 것은 아닙니다.
 
 ## 현재 제한 사항
 
@@ -543,7 +588,7 @@ mvn dependency:list
 - DOCX의 미지원 편집 구조·병합 레이아웃·페이지 배치와 북마크 대상까지 역변환하지는 않습니다. 생성한 링크·북마크의 실제 Word/LibreOffice 동작은 별도 수동 확인이 필요합니다.
 - HTML 미리보기는 최종 페이지 배치·출력 설정을 재현하지 않습니다. 실제 PDF/DOCX 기반 미리보기는 별도 개선 제안입니다.
 - 결과는 임시 메모리 보관이며 재시작 복구·디스크 저장·전체 변환/다운로드 메모리와 동시 실행 수 제한은 제공하지 않습니다.
-- 실제 글꼴 상태 기반 경고는 추가 개선이 필요합니다.
+- PDF 글꼴 검사는 설정 후보·기본 한글 샘플 범위입니다. 모든 글리프·사용자가 선택한 글꼴·서체 조합과 최종 표시를 인증하지 않습니다.
 
 원인·수정 방향·완료 기준은 [PLAN.md](PLAN.md)에 정리되어 있습니다.
 

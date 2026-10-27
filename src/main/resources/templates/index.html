@@ -189,9 +189,7 @@ System.out.println("Hello, md2docu!");
   <div class="card mb-3" id="convert-options">
     <div class="card-header py-2 fw-semibold">변환 옵션</div>
     <div class="card-body py-3">
-      <div id="pdf-warning" class="alert alert-warning py-2 mb-3 d-none">
-        ⚠️ PDF는 라이브러리 한계로 <strong>한글이 깨질 수 있습니다.</strong> 한글 문서는 DOCX를 권장합니다.
-      </div>
+      <div id="pdf-warning" class="alert alert-warning py-2 mb-3 d-none" role="status" aria-live="polite"></div>
       <div class="row g-3 align-items-end">
         <div class="col-sm-2">
           <label class="form-label small">출력 형식</label>
@@ -376,19 +374,50 @@ System.out.println("Hello, md2docu!");
     });
   });
 
-  // ── PDF 경고 (macOS/Linux 서버에서만 표시) ───────────────────────────────
+  // ── PDF 글꼴 상태 ────────────────────────────────────────────────────────
   const formatSelect = document.getElementById('opt-format');
   const pdfWarning = document.getElementById('pdf-warning');
-  let pdfKoreanWarning = false;
+  let pdfEnvironment = null;
+  let pdfEnvironmentError = null;
 
-  fetch('/api/system/info')
-    .then(r => r.json())
-    .then(info => { pdfKoreanWarning = info.pdfKoreanWarning; })
-    .catch(() => {});
+  function updatePdfWarning() {
+    pdfWarning.classList.toggle('d-none', formatSelect.value !== 'pdf');
+    if (formatSelect.value !== 'pdf') return;
+    pdfWarning.classList.toggle('alert-info', pdfEnvironment !== null && !pdfEnvironment.pdfKoreanWarning);
+    pdfWarning.classList.toggle('alert-warning', pdfEnvironment === null || pdfEnvironment.pdfKoreanWarning);
+    if (pdfEnvironmentError !== null) {
+      pdfWarning.textContent = 'PDF 글꼴 상태 조회 실패: ' + pdfEnvironmentError
+        + ' 페이지를 새로고침하거나 서버 글꼴 설정을 확인해 주세요. 한글 표시는 확인되지 않았습니다.';
+    } else if (pdfEnvironment === null) {
+      pdfWarning.textContent = 'PDF 글꼴 상태를 확인 중입니다.';
+    } else if (pdfEnvironment.pdfKoreanWarning) {
+      pdfWarning.textContent = (pdfEnvironment.pdfFonts.fonts.length === 0
+        ? '사용할 수 있는 PDF 글꼴을 찾지 못했습니다. '
+        : '기본 한글 샘플을 지원하는 PDF 글꼴을 찾지 못했습니다. ')
+        + '서버 글꼴 설정을 확인하거나 DOCX를 사용하세요. PDF 변환은 계속할 수 있으나 한글이 누락될 수 있습니다.';
+    } else {
+      pdfWarning.textContent = '서버 시작 시 설정된 PDF 글꼴에서 기본 한글 샘플 지원을 확인했습니다. '
+        + '선택한 글꼴·모든 문자·최종 레이아웃의 표시를 보장하지는 않습니다. 글꼴 변경 후에는 서버를 재시작하세요.';
+    }
+  }
 
-  formatSelect.addEventListener('change', () => {
-    pdfWarning.classList.toggle('d-none', !(pdfKoreanWarning && formatSelect.value === 'pdf'));
-  });
+  async function loadPdfEnvironment() {
+    try {
+      const info = await conversionJson('/api/system/info');
+      if (info === null || typeof info !== 'object' || typeof info.pdfKoreanWarning !== 'boolean'
+          || !info.pdfFonts || !Array.isArray(info.pdfFonts.fonts)) {
+        throw new Error('서버 글꼴 상태 응답 형식이 올바르지 않습니다.');
+      }
+      pdfEnvironment = info;
+    } catch (e) {
+      pdfEnvironmentError = e.message;
+    }
+    updatePdfWarning();
+  }
+
+  formatSelect.addEventListener('change', updatePdfWarning);
+  updatePdfWarning();
+  loadPdfEnvironment();
 
   // ── 파일 드래그&드롭 ──────────────────────────────────────────────────────
   let selectedFile = null;

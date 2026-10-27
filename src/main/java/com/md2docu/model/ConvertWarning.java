@@ -59,4 +59,13 @@ public class ConvertWarning {
     public static ConvertWarning hyperlinkUnresolved(String target) {
         return new ConvertWarning("HYPERLINK_UNRESOLVED", target, "문서 안에서 링크 대상을 찾을 수 없습니다: " + target);
     }
+
+    public static ConvertWarning pdfFontUnavailable(String family) {
+        return new ConvertWarning("PDF_FONT_UNAVAILABLE", family, "PDF 글꼴을 읽거나 등록할 수 없습니다: " + family);
+    }
+
+    public static ConvertWarning pdfKoreanFontUnavailable() {
+        return new ConvertWarning("PDF_KOREAN_FONT_UNAVAILABLE", "PDF",
+            "기본 한글 샘플을 지원하는 PDF 글꼴이 등록되지 않았습니다. 글꼴 설정을 확인하거나 DOCX를 사용하세요.");
+    }
 }

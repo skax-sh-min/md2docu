@@ -17,7 +17,6 @@ import org.jsoup.safety.Safelist;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -60,6 +59,8 @@ public class PdfConverter {
         UserSettings snapshot = new UserSettings(settingsService.get());
         PageLayout.validate(options.getPageSize(), snapshot);
         Document sanitized = sanitizeForPdf(html);
+        boolean needsKoreanFont = sanitized.text().codePoints()
+            .anyMatch(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HANGUL);
         processImages(sanitized, options, imagePaths, warnings);
         processLinks(sanitized, options, warnings);
         String fullHtml = wrapHtml(sanitized.body().html(), options, snapshot);
@@ -71,10 +72,6 @@ public class PdfConverter {
         PdfRendererBuilder builder = new PdfRendererBuilder();
         builder.useFastMode();
 
-        for (FontService.FontEntry entry : fontService.getAvailableFonts()) {
-            tryAddFont(builder, entry.path(), entry.family());
-        }
-
         builder.useUriResolver((baseUri, uri) -> {
             if (uri == null) return null;
             String lower = uri.toLowerCase(Locale.ROOT);
@@ -84,7 +81,14 @@ public class PdfConverter {
 
         builder.withW3cDocument(new W3CDom().fromJsoup(jsoupDoc), "/");
         builder.toStream(out);
-        builder.run();
+        try (var renderer = builder.buildPdfRenderer(); var fonts = fontService.registration()) {
+            fonts.register(renderer, warnings);
+            if (!fonts.koreanSampleSupported() && needsKoreanFont) {
+                warnings.add(ConvertWarning.pdfKoreanFontUnavailable());
+            }
+            renderer.layout();
+            renderer.createPDF();
+        }
 
         return out.toByteArray();
     }
@@ -97,13 +101,6 @@ public class PdfConverter {
             .removeProtocols("img", "src", "http", "https")
             .removeProtocols("a", "href", "ftp", "http", "https", "mailto");
         return new Cleaner(safelist).clean(Jsoup.parseBodyFragment(html));
-    }
-
-    private void tryAddFont(PdfRendererBuilder builder, String path, String family) {
-        File f = new File(path);
-        if (f.exists()) {
-            builder.useFont(f, family);
-        }
     }
 
     private void processImages(Document document, ConvertOptions options, LocalImagePaths imagePaths,
@@ -210,6 +207,7 @@ public class PdfConverter {
             + "h6 { font-size: " + s.getH6FontSizePt() + "pt; }\n"
             + "pre, code { font-size: " + s.getCodeFontSizePt() + "pt; }\n"
             + PDF_STATIC_CSS
+            + "\npre, code { font-family: 'Courier New', " + s.getBodyFontFamily() + ", monospace; }\n"
             + "\n.image-table { table-layout: fixed; }\n"
             + "\nimg { max-height: " + imageHeight + "pt; }\n";
     }

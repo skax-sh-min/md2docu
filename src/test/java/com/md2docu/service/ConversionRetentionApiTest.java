@@ -53,7 +53,7 @@ class ConversionRetentionApiTest {
         when(docx.convert(anyString(), any(), any(), anyList())).thenReturn(new byte[]{1, 2});
         var service = new ConvertService(new MarkdownService(), mock(PdfConverter.class), docx,
             new DocxToMarkdownConverter(), new ZipExtractor(), store);
-        controller = new ConvertController(service);
+        controller = new ConvertController(service, new FontService());
         mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ApiExceptionHandler()).build();
     }
 
@@ -102,7 +102,7 @@ class ConversionRetentionApiTest {
         store = new ConversionResultStore(10, 2, 100000, clock);
         var service = new ConvertService(new MarkdownService(), mock(PdfConverter.class), docx,
             new DocxToMarkdownConverter(), new ZipExtractor(), store);
-        var local = MockMvcBuilders.standaloneSetup(new ConvertController(service))
+        var local = MockMvcBuilders.standaloneSetup(new ConvertController(service, new FontService()))
             .setControllerAdvice(new ApiExceptionHandler()).build();
         local.perform(request(mode)).andExpect(status().isOk())
             .andExpect(jsonPath("$.expiresAt").value("2026-10-27T00:00:10Z"))

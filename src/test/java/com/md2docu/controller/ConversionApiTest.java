@@ -3,6 +3,7 @@ package com.md2docu.controller;
 import com.md2docu.model.ConvertOptions;
 import com.md2docu.model.ConvertResult;
 import com.md2docu.service.ConvertService;
+import com.md2docu.service.FontService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -45,7 +46,7 @@ class ConversionApiTest {
         when(service.convertUrl(anyString(), anyString(), any())).thenReturn(result);
         when(service.convertFile(any(), anyString(), any())).thenReturn(result);
         when(service.preview(anyString(), anyBoolean())).thenReturn("");
-        mvc = MockMvcBuilders.standaloneSetup(new ConvertController(service))
+        mvc = MockMvcBuilders.standaloneSetup(new ConvertController(service, new FontService()))
             .setControllerAdvice(new ApiExceptionHandler()).build();
     }
 

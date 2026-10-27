@@ -4,6 +4,7 @@ import com.md2docu.model.ConversionRequest;
 import com.md2docu.model.ConvertResult;
 import com.md2docu.model.ConvertWarning;
 import com.md2docu.service.ConvertService;
+import com.md2docu.service.FontService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.CacheControl;
@@ -17,7 +18,6 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
-import java.util.Locale;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestController
@@ -25,9 +25,11 @@ import org.springframework.web.server.ResponseStatusException;
 public class ConvertController {
 
     private final ConvertService convertService;
+    private final FontService fontService;
 
-    public ConvertController(ConvertService convertService) {
+    public ConvertController(ConvertService convertService, FontService fontService) {
         this.convertService = convertService;
+        this.fontService = fontService;
     }
 
     /**
@@ -109,9 +111,12 @@ public class ConvertController {
      */
     @GetMapping("/system/info")
     public ResponseEntity<Map<String, Object>> systemInfo() {
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        boolean pdfKoreanWarning = !os.contains("win");
-        return ResponseEntity.ok(Map.of("pdfKoreanWarning", pdfKoreanWarning));
+        FontService.FontStatus status = fontService.getStatus();
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(Map.of(
+            "pdfKoreanWarning", !status.koreanSampleSupported(),
+            "pdfFonts", status,
+            "verificationScope", "configured-fonts-korean-sample"
+        ));
     }
 
     /**

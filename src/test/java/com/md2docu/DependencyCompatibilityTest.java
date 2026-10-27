@@ -493,6 +493,88 @@ class DependencyCompatibilityTest {
         assertThat(entries.get("images/image_1.png")).isEqualTo(image);
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void downloadsMixedRunContentAndImagesWithoutLoss(boolean chapters) throws Exception {
+        byte[] image = png();
+        byte[] bytes;
+        try (XWPFDocument doc = new XWPFDocument()) {
+            var heading = doc.createParagraph();
+            heading.setStyle("Heading2");
+            heading.createRun().setText("Chapter");
+            var run = doc.createParagraph().createRun();
+            run.setText("LEFT *literal* ");
+            run.addPicture(new ByteArrayInputStream(image), Document.PICTURE_TYPE_PNG,
+                "test.png", Units.toEMU(2), Units.toEMU(2));
+            run.addBreak();
+            run.addTab();
+            run.setText("RIGHT");
+            bytes = documentBytes(doc);
+        }
+        var file = new MockMultipartFile("file", "mixed.docx", DOCX_CONTENT_TYPE, bytes);
+        ConversionResponse response = response(mvc.perform(multipart("/api/convert/md")
+                .file(file).param("splitByChapter", String.valueOf(chapters)))
+            .andExpect(status().isOk()).andReturn());
+        assertThat(response.warnings()).isEmpty();
+        Map<String, byte[]> entries = unzip(download(response, "application/zip"));
+        String path = chapters ? "01_Chapter.md" : "mixed.md";
+        assertThat(entries).containsKeys(path, "images/image_1.png");
+        assertThat(entries.get("images/image_1.png")).isEqualTo(image);
+        String source = new String(entries.get(path), StandardCharsets.UTF_8);
+        assertThat(source).contains("&#9;");
+        var html = Jsoup.parseBodyFragment(new com.md2docu.service.MarkdownService().toHtml(source, false, false));
+        assertThat(html.selectFirst("p").text()).contains("LEFT *literal*", "RIGHT");
+        assertThat(html.select("p img").eachAttr("src")).containsExactly("images/image_1.png");
+        assertThat(html.select("p br")).hasSize(1);
+        assertThat(html.select("em,strong")).isEmpty();
+    }
+
+    @Test
+    void exposesUnsupportedDocxContentWarningsWithoutDroppingFieldResults() throws Exception {
+        byte[] bytes;
+        try (XWPFDocument doc = new XWPFDocument()) {
+            var field = doc.createParagraph().getCTP().addNewFldSimple();
+            field.setInstr("DATE");
+            field.addNewR().addNewT().setStringValue("Visible result");
+            bytes = documentBytes(doc);
+        }
+        var file = new MockMultipartFile("file", "field.docx", DOCX_CONTENT_TYPE, bytes);
+        ConversionResponse response = response(mvc.perform(multipart("/api/convert/md").file(file))
+            .andExpect(status().isOk()).andReturn());
+        assertThat(response.warnings()).anySatisfy(warning ->
+            assertThat(warning.get("type")).isEqualTo("UNSUPPORTED_DOCX_CONTENT"));
+        assertThat(new String(download(response, "text/markdown; charset=UTF-8"), StandardCharsets.UTF_8))
+            .contains("Visible result");
+        mvc.perform(get("/api/convert/" + response.jobId() + "/warnings"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].type").value("UNSUPPORTED_DOCX_CONTENT"));
+    }
+
+    @Test
+    void buildsChapterCoverLinksFromPlainTitlesWithoutCreatingNestedLinks() throws Exception {
+        byte[] bytes;
+        try (XWPFDocument doc = new XWPFDocument()) {
+            var p = doc.createParagraph();
+            p.setStyle("Heading2");
+            p.createHyperlinkRun("https://example.com").setText("Link [label] *literal*");
+            doc.createParagraph().createRun().setText("Body");
+            bytes = documentBytes(doc);
+        }
+        var file = new MockMultipartFile("file", "linked.docx", DOCX_CONTENT_TYPE, bytes);
+        ConversionResponse response = response(mvc.perform(multipart("/api/convert/md")
+                .file(file).param("splitByChapter", "true"))
+            .andExpect(status().isOk()).andReturn());
+        assertThat(response.warnings()).isEmpty();
+        Map<String, byte[]> entries = unzip(download(response, "application/zip"));
+        assertThat(entries).hasSize(2);
+        String cover = new String(entries.get("00_linked.md"), StandardCharsets.UTF_8);
+        var html = Jsoup.parseBodyFragment(new com.md2docu.service.MarkdownService().toHtml(cover, false, false));
+        assertThat(html.select("a")).hasSize(1);
+        assertThat(html.selectFirst("a").text()).isEqualTo("Link [label] *literal*");
+        assertThat(entries).containsKey(html.selectFirst("a").attr("href"));
+        assertThat(html.select("em,strong")).isEmpty();
+    }
+
     @Test
     void splitsDocxChaptersIntoZip() throws Exception {
         byte[] bytes;

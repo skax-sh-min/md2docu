@@ -79,7 +79,7 @@ JAR 이름의 버전은 [pom.xml](pom.xml)의 프로젝트 버전을 따릅니�
 - DOCX 형식에 맞춰 목록은 최대 9단계까지 지원하며, 더 깊은 입력은 구조를 평탄화하지 않고 변환을 거부합니다.
 - 역변환은 첫 항목의 시작 번호를 기록하고 이어지는 항목은 `1.` 마커로 정규화합니다. 중첩 들여쓰기는 해당 Markdown 마커의 폭에 맞춥니다. 인접한 별개 목록은 보이지 않는 `<!-- list break -->` 주석으로 구분합니다.
 - Word 시작 번호가 Markdown의 범위인 `0`~`999999999` 밖이면 `1`로 대체하고 `UNSUPPORTED_LIST_START`를 반환합니다. 번호 정의 누락은 `LIST_NUMBERING_UNRESOLVED`, 십진수·글머리표 외 번호 형식의 십진수 대체는 `UNSUPPORTED_LIST_FORMAT`으로 알립니다.
-- 생성한 DOCX도 H2를 기준으로 Markdown 챕터 ZIP을 만들 수 있습니다. Run 내부 요소·이스케이프·링크 내부 콘텐츠 등의 역변환 제한은 아직 남아 있습니다.
+- 생성한 DOCX도 H2를 기준으로 Markdown 챕터 ZIP을 만들 수 있습니다.
 
 ### ZIP 파일 구성
 
@@ -116,6 +116,38 @@ ZIP 범위 밖으로 벗어나는 참조는 읽지 않고 `IMAGE_NOT_FOUND` 경�
 | 챕터 분리 켬 | 표지·목차와 H2별 Markdown을 포함한 `.zip` |
 
 챕터 분리 상태에서 H2가 없으면 단일 Markdown이 들어 있는 ZIP을 반환합니다.
+
+#### 내용·서식 보존 규칙
+
+- 같은 Run의 텍스트·이미지·텍스트를 원래 순서대로 보존합니다. 같은 이미지가 반복되면 파일은 재사용하고 본문의 각 표시 위치는 유지합니다. 하이퍼링크 안의 텍스트·이미지도 순서대로 직렬화합니다.
+- 본문의 수동 줄바꿈은 Markdown hard break(줄 끝 공백 두 개와 개행)로 기록합니다. 제목·표 셀, 연속·끝 줄바꿈처럼 한 줄 표현이 필요한 경우에는 `<br />`를 사용합니다.
+- 탭은 `&#9;`로 기록합니다. 탭 문자 자체는 보존하지만 Word의 탭 정지점이나 페이지 배치를 재현하는 것은 아닙니다.
+- 일반 텍스트의 별표·백틱·대괄호·HTML 모양 문자열이 서식으로 바뀌지 않도록 역슬래시와 문자 참조로 이스케이프합니다. 원래 일반 텍스트였던 URL·이메일은 자동 링크로 바꾸지 않습니다.
+- 같은 서식의 인접 Run은 합칩니다. 서식 경계가 맞닿거나 코드의 앞뒤 공백·표 셀 내용을 정확히 보존해야 하는 경우에는 인라인 HTML을 사용합니다. 취소선과 `Courier New` Run의 인라인 코드도 보존합니다.
+- 링크 표시 문구와 주소를 구분해 처리합니다. 괄호·엔티티가 있는 주소의 의미가 달라지지 않도록 Markdown 링크 또는 HTML 앵커를 선택합니다. 챕터 표지의 제목은 일반 텍스트로 추출하고 안전한 목차 링크를 만듭니다.
+- 표는 첫 행을 헤더로 하는 Markdown 표로 직렬화합니다. 셀 안의 문단 경계와 줄바꿈은 `<br />`로, 파이프와 백슬래시는 셀 구분자로 오해되지 않도록 기록합니다.
+- 감지한 미지원 필드·컨트롤·병합/중첩 표 등은 가능한 표시 내용을 보존하고 `UNSUPPORTED_DOCX_CONTENT`로 알립니다. 편집 구조·병합 레이아웃·페이지/단 나눔까지 재현하지는 않습니다. 주소가 없는 링크는 표시 내용을 유지하고 `HYPERLINK_UNRESOLVED`를 반환합니다.
+- 내부 링크 주소도 보존하지만 Word 북마크 대상은 재생성하지 않으며 `UNSUPPORTED_DOCX_CONTENT`로 알립니다.
+
+#### B05 검증용 샘플
+
+- [DOCX 원본](sample/b05-content-preservation.docx)
+- [역변환 기준 Markdown](sample/b05-content-preservation.md)
+- [Markdown이 참조하는 이미지](sample/images/image_1.png)
+
+두 문서는 같은 내용을 담고 있으며, Markdown은 현재 변환기가 DOCX 원본을 실제 역변환한 결과입니다. 텍스트 사이의 반복 이미지, 수동·연속 줄바꿈, 탭, 리터럴 Markdown 문법, 인접한 서식 Run, 공백이 있는 코드, 특수문자 링크, 표 셀의 문단·파이프, 혼합 중첩 목록을 확인할 수 있습니다.
+
+1. **DOCX → MD**에서 DOCX 원본을 업로드하고 **챕터 분리를 끈 상태**로 변환합니다.
+2. 내려받은 ZIP을 풀고 Markdown 내용과 이미지 파일을 기준 샘플과 비교합니다. 이미지 표시는 총 4곳이며, 동일한 PNG 파일 하나를 재사용합니다. 본문 hard break의 줄 끝 공백 두 개는 의도된 표현입니다.
+3. `09`의 DATE 필드는 저장된 표시값 `2026-10-27`만 보존하고, `10`의 내부 링크는 주소만 보존합니다. **`UNSUPPORTED_DOCX_CONTENT` 경고 2건**(`fldSimple`, `bookmark-target:b05_target`)은 예상된 결과이며, Word 북마크로의 이동은 재현하지 않습니다.
+
+Markdown을 PDF/DOCX로 변환할 때는 로컬 이미지도 함께 전달하도록 다음과 같이 ZIP으로 묶어 업로드합니다. 프로젝트 루트에서 실행하세요.
+
+```powershell
+Compress-Archive -Path .\sample\b05-content-preservation.md, .\sample\images -DestinationPath .\b05-sample.zip -Force
+```
+
+MD 파일만 업로드하면 함께 저장된 로컬 PNG를 읽을 수 없습니다. 이 샘플은 DOCX → Markdown의 내용 보존 확인용이며, Word의 페이지 배치나 완전한 왕복 변환을 보장하지는 않습니다.
 
 ### URL 입력
 
@@ -341,6 +373,9 @@ mvn "-Dtest=MarkdownServiceTest" test
 # DOCX 의미 구조와 왕복 변환 회귀 테스트
 mvn "-Dtest=DocxStructureTest" test
 
+# DOCX 역변환의 내용·서식 보존 회귀 테스트
+mvn "-Dtest=DocxToMarkdownConverterTest" test
+
 # ZIP 이미지 경로와 API 호환성 테스트
 mvn "-Dtest=ImageResolverTest,DependencyCompatibilityTest" test
 
@@ -348,7 +383,7 @@ mvn "-Dtest=ImageResolverTest,DependencyCompatibilityTest" test
 mvn dependency:list
 ```
 
-2026-10-26 기준 **209개 테스트 통과**: 호환성 76개, DOCX 구조 27개, Markdown 32개, PDF 회귀 49개, 설정 9개, 이미지 경로 16개.
+2026-10-27 기준 **255개 테스트 통과**: 호환성 80개, DOCX 구조 27개, DOCX 역변환 42개, Markdown 32개, PDF 회귀 49개, 설정 9개, 이미지 경로 16개.
 
 - Spring Boot 4 애플리케이션 컨텍스트, MVC·Thymeleaf·JSON 응답
 - H1 유무·목차/번호 옵션 조합, Setext·단계 생략·중복 ID, 인라인 서식·엔티티·코드 블록 보존
@@ -363,6 +398,8 @@ mvn dependency:list
 - DOCX H1~H6 스타일·outline·북마크·인라인 서식과 제목 크기, 최대 9단계 혼합 목록, 시작 번호·재시작·중첩·문단 경계의 왕복 변환
 - 생성 DOCX의 H2 기반 챕터 분리, Word 번호 시작값 override, 번호 정의 누락·Markdown 범위 밖 시작값 경고
 - DOCX → Markdown, 이미지 추출 ZIP, 챕터 분리
+- 혼합 Run의 텍스트·반복 이미지·줄바꿈·탭 순서, 특수문자·공백·인접 서식·코드·링크 주소·표 셀의 재파싱 결과
+- 혼합 목록과 일반 문단 경계, 이미지/챕터 ZIP의 실제 바이트·내용, 챕터 표지 링크, 미지원 구조의 변환 응답·경고 조회
 - Jackson 3 설정 저장·로드·초기화·기존 JSON 속성 호환
 - 잘못된 입력과 설정 읽기·쓰기 실패의 오류 응답
 
@@ -372,7 +409,7 @@ mvn dependency:list
 
 다음 개선 과제가 남아 있습니다.
 
-- DOCX 역변환의 혼합 Run·줄바꿈·탭·특수문자, 링크 내부 이미지 보존에 제한이 있습니다.
+- DOCX의 미지원 편집 구조·병합 레이아웃·페이지 배치까지 역변환하지는 않습니다. Markdown → DOCX의 링크 내부 이미지·로컬 링크 보존도 개선이 필요합니다.
 - 이미지 타입 추정과 일부 실패 경고, 설정의 형식별 반영, API 옵션 처리에 차이가 있습니다.
 - 미리보기는 최종 출력과 같지 않으며 응답 순서 역전 및 오류 표시 개선이 필요합니다.
 - 결과 만료·용량·동시성 정책과 실제 글꼴 기반 경고는 추가 개선이 필요합니다.

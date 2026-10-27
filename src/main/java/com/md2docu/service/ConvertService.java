@@ -32,6 +32,8 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import java.nio.file.Path;
 
+import static com.md2docu.util.MarkdownText.escapeText;
+
 @Service
 @EnableScheduling
 public class ConvertService {
@@ -296,7 +298,8 @@ public class ConvertService {
         for (int i = 0; i < lines.length; i++) {
             if (lines[i].startsWith("## ")) {
                 h2Positions.add(i);
-                h2Titles.add(lines[i].substring(3).trim());
+                String heading = markdownService.toHtml(lines[i], false, false);
+                h2Titles.add(Jsoup.parseBodyFragment(heading).select("h2").text());
             }
         }
 
@@ -321,7 +324,7 @@ public class ConvertService {
 
         cover.append("\n## 목차\n\n");
         for (int i = 0; i < h2Titles.size(); i++) {
-            cover.append(String.format("%d. [%s](%s)\n", i + 1, h2Titles.get(i), chapterFiles.get(i)));
+            cover.append(String.format("%d. [%s](%s)\n", i + 1, escapeText(h2Titles.get(i)), chapterFiles.get(i)));
         }
         entries.put("00_" + base + ".md", cover.toString().getBytes(StandardCharsets.UTF_8));
 

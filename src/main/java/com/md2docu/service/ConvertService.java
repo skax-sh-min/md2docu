@@ -4,17 +4,17 @@ import com.md2docu.model.ConvertOptions;
 import com.md2docu.model.ConvertResult;
 import com.md2docu.model.ConvertWarning;
 import com.md2docu.util.ZipExtractor;
+import com.md2docu.util.ImageResolver.LocalImagePaths;
 import org.jsoup.Jsoup;
 import org.jsoup.safety.Safelist;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.EnableScheduling;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
@@ -22,17 +22,24 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.file.Files;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import java.nio.file.Path;
 
+import static com.md2docu.util.MarkdownText.escapeText;
+
 @Service
-@EnableScheduling
 public class ConvertService {
 
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
@@ -40,41 +47,46 @@ public class ConvertService {
         .followRedirects(HttpClient.Redirect.NEVER)
         .build();
     private static final long MAX_DOWNLOAD_BYTES = 10L * 1024 * 1024;
+    private static final Duration DOWNLOAD_TIMEOUT = Duration.ofSeconds(15);
 
     private final MarkdownService markdownService;
     private final PdfConverter pdfConverter;
     private final DocxConverter docxConverter;
     private final DocxToMarkdownConverter docxToMarkdownConverter;
     private final ZipExtractor zipExtractor;
+    private final HttpClient httpClient;
+    private final ConversionResultStore resultStore;
 
-    @Value("${app.convert.temp-expiry-seconds:3600}")
-    private long tempExpirySeconds;
-
-    private static final int MAX_STORE_SIZE = 500;
-
-    // jobId → (result, createdAt)
-    private final Map<String, StoredResult> store = new ConcurrentHashMap<>();
-
+    @Autowired
     public ConvertService(MarkdownService markdownService, PdfConverter pdfConverter,
                           DocxConverter docxConverter, DocxToMarkdownConverter docxToMarkdownConverter,
-                          ZipExtractor zipExtractor) {
+                          ZipExtractor zipExtractor, ConversionResultStore resultStore) {
+        this(markdownService, pdfConverter, docxConverter, docxToMarkdownConverter,
+            zipExtractor, resultStore, HTTP_CLIENT);
+    }
+
+    ConvertService(MarkdownService markdownService, PdfConverter pdfConverter,
+                   DocxConverter docxConverter, DocxToMarkdownConverter docxToMarkdownConverter,
+                   ZipExtractor zipExtractor, ConversionResultStore resultStore, HttpClient httpClient) {
         this.markdownService = markdownService;
         this.pdfConverter = pdfConverter;
         this.docxConverter = docxConverter;
         this.docxToMarkdownConverter = docxToMarkdownConverter;
         this.zipExtractor = zipExtractor;
+        this.httpClient = httpClient;
+        this.resultStore = resultStore;
     }
 
     // ── 파일 업로드 변환 ──────────────────────────────────────────────────────
 
     public ConvertResult convertFile(MultipartFile file, String format, ConvertOptions options) throws IOException {
-        String name = file.getOriginalFilename() != null ? file.getOriginalFilename().toLowerCase() : "";
+        String name = uploadName(file, ".md", ".zip");
         byte[] bytes = file.getBytes();
 
-        if (name.endsWith(".zip")) {
+        if (name.toLowerCase(Locale.ROOT).endsWith(".zip")) {
             return convertZip(bytes, format, options);
         }
-        String markdown = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        String markdown = decodeMarkdown(bytes);
         return convertMarkdown(markdown, format, options, null, baseName(name));
     }
 
@@ -87,13 +99,7 @@ public class ConvertService {
     // ── DOCX → Markdown 변환 ─────────────────────────────────────────────────
 
     public ConvertResult convertDocxToMd(MultipartFile file, boolean splitByChapter) throws IOException {
-        String raw  = file.getOriginalFilename() != null ? file.getOriginalFilename() : "document.docx";
-        int    sep  = Math.max(raw.lastIndexOf('/'), raw.lastIndexOf('\\'));
-        String name = sep >= 0 ? raw.substring(sep + 1) : raw;
-        if (name.isEmpty()) name = "document.docx";
-        if (!name.toLowerCase().endsWith(".docx")) {
-            throw new IOException("지원하지 않는 파일 형식입니다. .docx 파일만 지원합니다.");
-        }
+        String name = uploadName(file, ".docx");
         List<ConvertWarning> warnings = new ArrayList<>();
         DocxToMarkdownConverter.Output output = docxToMarkdownConverter.convert(file.getBytes(), warnings);
 
@@ -123,28 +129,30 @@ public class ConvertService {
             result.setFileName(base + ".zip");
             result.setContentType("application/zip");
         }
-        return storeResult(result);
+        return resultStore.put(result);
     }
 
     // ── URL 변환 ──────────────────────────────────────────────────────────────
 
     public ConvertResult convertUrl(String url, String format, ConvertOptions options) throws IOException {
+        url = url == null ? "" : url.trim();
         validateUrl(url);
         String rawUrl = resolveRawUrl(url);
         if (!rawUrl.equals(url)) validateUrl(rawUrl);
+        String path      = URI.create(rawUrl).getPath();
+        String lowerPath = path.toLowerCase(Locale.ROOT);
+        if (!lowerPath.endsWith(".md") && !lowerPath.endsWith(".zip")) {
+            throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                "지원하지 않는 파일 형식입니다. .md 또는 .zip URL만 허용합니다.");
+        }
         byte[] content = downloadFromUrl(rawUrl);
         requireNotHtml(content);
-        String path      = URI.create(rawUrl).getPath();
-        String lowerPath = path.toLowerCase();
-        if (!lowerPath.endsWith(".md") && !lowerPath.endsWith(".zip")) {
-            throw new IOException("지원하지 않는 파일 형식입니다. .md 또는 .zip URL만 허용합니다.");
-        }
         String fname = path.substring(Math.max(path.lastIndexOf('/') + 1, 0));
         String base  = fname.isEmpty() ? "document" : baseName(fname);
         if (lowerPath.endsWith(".zip")) {
             return convertZip(content, format, options);
         }
-        String markdown = new String(content, StandardCharsets.UTF_8);
+        String markdown = decodeMarkdown(content);
         return convertMarkdown(markdown, format, options, null, base, rawUrl);
     }
 
@@ -176,51 +184,54 @@ public class ConvertService {
 
     private void requireNotHtml(byte[] content) throws IOException {
         int len = Math.min(content.length, 512);
-        String preview = new String(content, 0, len, StandardCharsets.UTF_8).stripLeading().toLowerCase();
+        String preview = new String(content, 0, len, StandardCharsets.UTF_8)
+            .replaceFirst("^\uFEFF", "").stripLeading().toLowerCase(Locale.ROOT);
         if (preview.startsWith("<!doctype") || preview.startsWith("<html")) {
-            throw new IOException(
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "다운로드한 내용이 HTML 페이지입니다. "
                 + "GitHub/GitLab 파일 링크를 사용하거나 Raw URL을 직접 입력해 주세요.");
         }
     }
 
-    private void validateUrl(String url) throws IOException {
-        if (url == null || url.isBlank()) throw new IOException("URL을 입력해 주세요.");
-        String lower = url.toLowerCase();
+    private void validateUrl(String url) {
+        if (url == null || url.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "URL을 입력해 주세요.");
+        String lower = url.toLowerCase(Locale.ROOT);
         if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
-            throw new IOException("http:// 또는 https:// URL만 허용합니다.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "http:// 또는 https:// URL만 허용합니다.");
         }
         try {
             URI parsed = URI.create(url);
-            if (parsed.getUserInfo() != null) throw new IOException("URL에 자격 증명(userinfo)을 포함할 수 없습니다.");
+            if (parsed.getUserInfo() != null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "URL에 자격 증명(userinfo)을 포함할 수 없습니다.");
             String host = parsed.getHost();
-            if (host == null || host.isBlank()) throw new IOException("유효하지 않은 URL입니다.");
+            if (host == null || host.isBlank() || parsed.getPort() > 65535) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "유효하지 않은 URL입니다.");
+            }
             // IPv6 brackets: [::1] → ::1
             String bareHost = host.startsWith("[") && host.endsWith("]")
                 ? host.substring(1, host.length() - 1) : host;
             // Fast-fail: obvious internal hostnames/IP patterns before DNS lookup
-            if (isInternalHost(bareHost.toLowerCase())) {
-                throw new IOException("내부 네트워크 주소는 허용되지 않습니다.");
+            if (isInternalHost(bareHost.toLowerCase(Locale.ROOT))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "내부 네트워크 주소는 허용되지 않습니다.");
             }
             // Resolve DNS and verify every returned address (blocks nip.io-style and IPv6 SSRF)
             InetAddress[] addresses;
             try {
                 addresses = InetAddress.getAllByName(bareHost);
             } catch (UnknownHostException e) {
-                throw new IOException("호스트를 찾을 수 없습니다: " + bareHost);
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "호스트를 찾을 수 없습니다: " + bareHost, e);
             }
             for (InetAddress addr : addresses) {
                 if (addr.isLoopbackAddress() || addr.isSiteLocalAddress()
                         || addr.isLinkLocalAddress() || addr.isAnyLocalAddress()
                         || addr.isMulticastAddress()) {
-                    throw new IOException("내부 네트워크 주소는 허용되지 않습니다.");
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "내부 네트워크 주소는 허용되지 않습니다.");
                 }
                 if (addr instanceof java.net.Inet6Address && isBlockedInet6(addr.getAddress())) {
-                    throw new IOException("내부 네트워크 주소는 허용되지 않습니다.");
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "내부 네트워크 주소는 허용되지 않습니다.");
                 }
             }
         } catch (IllegalArgumentException e) {
-            throw new IOException("유효하지 않은 URL입니다: " + e.getMessage());
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "유효하지 않은 URL입니다.", e);
         }
     }
 
@@ -254,36 +265,96 @@ public class ConvertService {
     private byte[] downloadFromUrl(String url) throws IOException {
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(url))
-            .timeout(Duration.ofSeconds(15))
+            .timeout(DOWNLOAD_TIMEOUT)
             .GET()
             .build();
-        try {
-            HttpResponse<InputStream> response = HTTP_CLIENT.send(request,
-                HttpResponse.BodyHandlers.ofInputStream());
-            int status = response.statusCode();
+        CompletableFuture<HttpResponse<byte[]>> download = httpClient.sendAsync(request, info -> {
+            int status = info.statusCode();
+            ResponseStatusException failure = null;
             if (status >= 300 && status < 400) {
-                try (InputStream ignored = response.body()) { /* drain */ }
-                throw new IOException(
+                failure = new ResponseStatusException(HttpStatus.BAD_GATEWAY,
                     "URL이 리다이렉트됩니다 (HTTP " + status + "). "
                     + "GitHub/GitLab 파일 링크를 사용하거나 Raw URL을 직접 입력해 주세요.");
+            } else if (status < 200 || status >= 300) {
+                failure = new ResponseStatusException(HttpStatus.BAD_GATEWAY, "다운로드 실패: HTTP " + status);
             }
-            if (status < 200 || status >= 300) {
-                try (InputStream ignored = response.body()) { /* drain */ }
-                throw new IOException("다운로드 실패: HTTP " + status);
+            return new DownloadBodySubscriber(failure);
+        });
+        try {
+            return download.get(DOWNLOAD_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS).body();
+        } catch (TimeoutException e) {
+            download.cancel(true);
+            throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "URL 다운로드 시간이 초과되었습니다 (15초).", e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof ResponseStatusException response) throw response;
+            if (cause instanceof java.net.http.HttpTimeoutException) {
+                throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "URL 다운로드 시간이 초과되었습니다 (15초).", cause);
             }
-            try (InputStream is = response.body()) {
-                byte[] buf = is.readNBytes((int) MAX_DOWNLOAD_BYTES + 1);
-                if (buf.length > MAX_DOWNLOAD_BYTES) {
-                    throw new IOException("파일 크기가 최대 허용량("
-                        + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + "MB)을 초과했습니다.");
-                }
-                return buf;
+            if (cause instanceof IOException) {
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "URL 다운로드 중 통신 오류가 발생했습니다.", cause);
             }
-        } catch (java.net.http.HttpTimeoutException e) {
-            throw new IOException("URL 다운로드 시간이 초과되었습니다 (15초).");
+            throw new IOException("URL 다운로드 중 오류가 발생했습니다.", cause);
         } catch (InterruptedException e) {
+            download.cancel(true);
             Thread.currentThread().interrupt();
-            throw new IOException("다운로드가 중단되었습니다.");
+            throw new IOException("다운로드가 중단되었습니다.", e);
+        }
+    }
+
+    private static final class DownloadBodySubscriber implements HttpResponse.BodySubscriber<byte[]> {
+        private final CompletableFuture<byte[]> body = new CompletableFuture<>();
+        private final ByteArrayOutputStream output = new ByteArrayOutputStream();
+        private final ResponseStatusException failure;
+        private Flow.Subscription subscription;
+
+        private DownloadBodySubscriber(ResponseStatusException failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        public CompletionStage<byte[]> getBody() {
+            return body;
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription subscription) {
+            this.subscription = subscription;
+            if (failure != null) {
+                body.completeExceptionally(failure);
+                subscription.cancel();
+            } else {
+                subscription.request(1);
+            }
+        }
+
+        @Override
+        public void onNext(List<ByteBuffer> buffers) {
+            if (body.isDone()) return;
+            long bytes = output.size();
+            for (ByteBuffer buffer : buffers) bytes += buffer.remaining();
+            if (bytes > MAX_DOWNLOAD_BYTES) {
+                body.completeExceptionally(new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
+                    "파일 크기가 최대 허용량(" + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + "MB)을 초과했습니다."));
+                subscription.cancel();
+            } else {
+                for (ByteBuffer buffer : buffers) {
+                    byte[] chunk = new byte[buffer.remaining()];
+                    buffer.get(chunk);
+                    output.writeBytes(chunk);
+                }
+                subscription.request(1);
+            }
+        }
+
+        @Override
+        public void onError(Throwable error) {
+            body.completeExceptionally(error);
+        }
+
+        @Override
+        public void onComplete() {
+            if (!body.isDone()) body.complete(output.toByteArray());
         }
     }
 
@@ -295,7 +366,8 @@ public class ConvertService {
         for (int i = 0; i < lines.length; i++) {
             if (lines[i].startsWith("## ")) {
                 h2Positions.add(i);
-                h2Titles.add(lines[i].substring(3).trim());
+                String heading = markdownService.toHtml(lines[i], false, false);
+                h2Titles.add(Jsoup.parseBodyFragment(heading).select("h2").text());
             }
         }
 
@@ -320,7 +392,7 @@ public class ConvertService {
 
         cover.append("\n## 목차\n\n");
         for (int i = 0; i < h2Titles.size(); i++) {
-            cover.append(String.format("%d. [%s](%s)\n", i + 1, h2Titles.get(i), chapterFiles.get(i)));
+            cover.append(String.format("%d. [%s](%s)\n", i + 1, escapeText(h2Titles.get(i)), chapterFiles.get(i)));
         }
         entries.put("00_" + base + ".md", cover.toString().getBytes(StandardCharsets.UTF_8));
 
@@ -347,7 +419,8 @@ public class ConvertService {
             .replaceAll("_+", "_")
             .replaceAll("^_|_$", "");
         if (slug.isEmpty()) return "chapter";
-        return slug.length() > 50 ? slug.substring(0, 50) : slug;
+        int length = slug.codePointCount(0, slug.length());
+        return length > 50 ? slug.substring(0, slug.offsetByCodePoints(0, 50)) : slug;
     }
 
     private byte[] createZip(Map<String, byte[]> entries) throws IOException {
@@ -370,9 +443,10 @@ public class ConvertService {
         Path mdFile = extraction.mainMdFile();
 
         try {
-            if (mdFile == null) throw new IOException("ZIP 파일 안에 .md 파일이 없습니다.");
-            String markdown = Files.readString(mdFile);
-            return convertMarkdown(markdown, format, options, basePath, baseName(mdFile.getFileName().toString()));
+            if (mdFile == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "ZIP 파일 안에 .md 파일이 없습니다.");
+            String markdown = decodeMarkdown(Files.readAllBytes(mdFile));
+            LocalImagePaths imagePaths = new LocalImagePaths(basePath, mdFile.getParent());
+            return convertMarkdown(markdown, format, options, imagePaths, baseName(mdFile.getFileName().toString()));
         } finally {
             zipExtractor.cleanup(basePath);
         }
@@ -381,13 +455,17 @@ public class ConvertService {
     // ── 핵심 변환 로직 ────────────────────────────────────────────────────────
 
     private ConvertResult convertMarkdown(String markdown, String format,
-                                         ConvertOptions options, Path basePath, String baseName) throws IOException {
-        return convertMarkdown(markdown, format, options, basePath, baseName, null);
+                                         ConvertOptions options, LocalImagePaths imagePaths, String baseName) throws IOException {
+        return convertMarkdown(markdown, format, options, imagePaths, baseName, null);
     }
 
     private ConvertResult convertMarkdown(String markdown, String format,
-                                         ConvertOptions options, Path basePath, String baseName,
+                                         ConvertOptions options, LocalImagePaths imagePaths, String baseName,
                                          String baseUrl) throws IOException {
+        if (markdown != null && markdown.startsWith("\uFEFF")) markdown = markdown.substring(1);
+        if (markdown == null || markdown.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "변환할 Markdown 내용을 입력해 주세요.");
+        }
         List<ConvertWarning> warnings = new ArrayList<>();
         String html = markdownService.toHtml(markdown, options.isGenerateToc(), options.isNumberHeadings());
         if (baseUrl != null) {
@@ -399,11 +477,11 @@ public class ConvertService {
         String fileName;
 
         if ("docx".equalsIgnoreCase(format)) {
-            fileBytes = docxConverter.convert(html, options, basePath, warnings);
+            fileBytes = docxConverter.convert(html, options, imagePaths, warnings);
             contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
             fileName = baseName + ".docx";
         } else {
-            fileBytes = pdfConverter.convert(html, options, basePath, warnings);
+            fileBytes = pdfConverter.convert(html, options, imagePaths, warnings);
             contentType = "application/pdf";
             fileName = baseName + ".pdf";
         }
@@ -417,30 +495,17 @@ public class ConvertService {
         result.setContentType(contentType);
         result.setWarnings(warnings);
 
-        return storeResult(result);
-    }
-
-    private ConvertResult storeResult(ConvertResult result) {
-        if (store.size() >= MAX_STORE_SIZE) {
-            store.entrySet().stream()
-                .min(Comparator.comparing(e -> e.getValue().createdAt()))
-                .map(Map.Entry::getKey)
-                .ifPresent(store::remove);
-        }
-        store.put(result.getJobId(), new StoredResult(result, Instant.now()));
-        return result;
+        return resultStore.put(result);
     }
 
     // ── 다운로드 ──────────────────────────────────────────────────────────────
 
     public ConvertResult getResult(String jobId) {
-        StoredResult stored = store.get(jobId);
-        return stored != null ? stored.result() : null;
+        return resultStore.get(jobId);
     }
 
     public List<ConvertWarning> getWarnings(String jobId) {
-        StoredResult stored = store.get(jobId);
-        return stored != null ? stored.result().getWarnings() : List.of();
+        return resultStore.getWarnings(jobId);
     }
 
     // ── 미리보기 ─────────────────────────────────────────────────────────────
@@ -455,18 +520,33 @@ public class ConvertService {
             .addAttributes("a", "class"));
     }
 
-    // ── 만료된 결과 정리 (1시간마다) ─────────────────────────────────────────
-
-    @Scheduled(fixedDelay = 3600_000)
-    public void evictExpired() {
-        Instant cutoff = Instant.now().minusSeconds(tempExpirySeconds);
-        store.entrySet().removeIf(e -> e.getValue().createdAt().isBefore(cutoff));
-    }
-
     private String baseName(String fileName) {
         int dot = fileName.lastIndexOf('.');
-        return dot > 0 ? fileName.substring(0, dot) : fileName;
+        String base = (dot > 0 ? fileName.substring(0, dot) : fileName)
+            .replaceAll("[\\p{Cntrl}/\\\\:*?\"<>|]", "").trim();
+        return base.isEmpty() ? "document" : base;
     }
 
-    private record StoredResult(ConvertResult result, Instant createdAt) {}
+    private String uploadName(MultipartFile file, String... extensions) {
+        if (file.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "빈 파일은 변환할 수 없습니다.");
+        String raw = file.getOriginalFilename();
+        if (raw == null || raw.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "파일 이름이 필요합니다.");
+        int separator = Math.max(raw.lastIndexOf('/'), raw.lastIndexOf('\\'));
+        String name = raw.substring(separator + 1);
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (Arrays.stream(extensions).noneMatch(lower::endsWith)) {
+            throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                "지원하지 않는 파일 형식입니다. " + String.join(", ", extensions) + " 파일만 지원합니다.");
+        }
+        return name;
+    }
+
+    private String decodeMarkdown(byte[] content) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(content)).toString();
+        } catch (CharacterCodingException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Markdown 파일은 올바른 UTF-8 텍스트여야 합니다.", e);
+        }
+    }
+
 }

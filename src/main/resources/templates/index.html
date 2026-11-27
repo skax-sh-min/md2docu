@@ -4,8 +4,8 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>md2docu — Markdown 변환기</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"></script>
   <style>
     body { background: #f8f9fa; }
     .editor-wrap { position: relative; }
@@ -130,7 +130,9 @@ System.out.println("Hello, md2docu!");
           <label class="form-label fw-semibold mb-0">미리보기</label>
           <button class="btn btn-sm btn-outline-secondary" id="btn-preview">미리보기 갱신</button>
         </div>
-        <div id="preview-pane"></div>
+        <div id="preview-pane" aria-busy="false" aria-describedby="preview-status preview-help"></div>
+        <div id="preview-status" class="small mt-1 text-muted" role="status" aria-live="polite" aria-atomic="true"></div>
+        <p id="preview-help" class="small text-muted mt-2 mb-0">입력 텍스트와 소제목 번호 옵션만 반영하는 HTML 미리보기입니다. 목차·이미지 포함·링크 처리·페이지 크기·출력 설정은 최종 PDF/DOCX에만 적용됩니다. 로컬 이미지는 이 화면에서 표시되지 않을 수 있습니다.</p>
       </div>
     </div>
   </div>
@@ -187,9 +189,7 @@ System.out.println("Hello, md2docu!");
   <div class="card mb-3" id="convert-options">
     <div class="card-header py-2 fw-semibold">변환 옵션</div>
     <div class="card-body py-3">
-      <div id="pdf-warning" class="alert alert-warning py-2 mb-3 d-none">
-        ⚠️ PDF는 라이브러리 한계로 <strong>한글이 깨질 수 있습니다.</strong> 한글 문서는 DOCX를 권장합니다.
-      </div>
+      <div id="pdf-warning" class="alert alert-warning py-2 mb-3 d-none" role="status" aria-live="polite"></div>
       <div class="row g-3 align-items-end">
         <div class="col-sm-2">
           <label class="form-label small">출력 형식</label>
@@ -210,7 +210,7 @@ System.out.println("Hello, md2docu!");
           <select class="form-select form-select-sm" id="opt-link">
             <option value="keep">링크 유지</option>
             <option value="warn">첨부 경고 표시</option>
-            <option value="ignore">링크 텍스트만</option>
+            <option value="ignore">링크 제거 (내용 유지)</option>
           </select>
         </div>
         <div class="col-sm-2">
@@ -239,10 +239,13 @@ System.out.println("Hello, md2docu!");
     <span class="spinner-border me-1 d-none" id="spinner"></span><span id="btn-label">변환하기</span>
   </button>
 
+  <p class="small text-muted mt-2 mb-0">결과는 서버 메모리에 임시 보관됩니다. 보관 한도 초과나 서버 재시작으로 기한 전에 삭제될 수 있습니다.</p>
+
   <!-- 결과 -->
   <div id="result-box" class="alert alert-success mt-3">
     <strong>✅ 변환 완료! 파일이 자동으로 다운로드됩니다.</strong>
     <a id="download-link" href="#" class="btn btn-sm btn-success ms-2">다시 받기</a>
+    <div id="result-retention" class="small mt-2"></div>
   </div>
 
   <div id="warning-box" class="alert alert-warning mt-2">
@@ -285,7 +288,7 @@ System.out.println("Hello, md2docu!");
           </div>
           <div class="col-sm-3">
             <label class="form-label">줄 간격</label>
-            <input type="number" class="form-control form-control-sm" id="cfg-lineHeight" min="1.0" max="3.0" step="0.1"/>
+            <input type="number" class="form-control form-control-sm" id="cfg-lineHeight" min="1.0" max="3.0" step="any"/>
           </div>
         </div>
 
@@ -320,6 +323,9 @@ System.out.println("Hello, md2docu!");
 
         <hr class="my-3"/>
         <p class="fw-semibold mb-2">여백 (mm)</p>
+        <p class="small text-muted">저장할 때 A4와 LETTER 모두에서 최소
+          <span th:text="${minBodyWidthMm}"></span>×<span th:text="${minBodyHeightMm}"></span>mm의 본문 영역을 확보해야 합니다.
+          기존 설정이 맞지 않으면 기본값으로 복원한 뒤 저장하세요.</p>
         <div class="row g-2">
           <div class="col-6 col-sm-3">
             <label class="form-label small">상단</label>
@@ -368,19 +374,50 @@ System.out.println("Hello, md2docu!");
     });
   });
 
-  // ── PDF 경고 (macOS/Linux 서버에서만 표시) ───────────────────────────────
+  // ── PDF 글꼴 상태 ────────────────────────────────────────────────────────
   const formatSelect = document.getElementById('opt-format');
   const pdfWarning = document.getElementById('pdf-warning');
-  let pdfKoreanWarning = false;
+  let pdfEnvironment = null;
+  let pdfEnvironmentError = null;
 
-  fetch('/api/system/info')
-    .then(r => r.json())
-    .then(info => { pdfKoreanWarning = info.pdfKoreanWarning; })
-    .catch(() => {});
+  function updatePdfWarning() {
+    pdfWarning.classList.toggle('d-none', formatSelect.value !== 'pdf');
+    if (formatSelect.value !== 'pdf') return;
+    pdfWarning.classList.toggle('alert-info', pdfEnvironment !== null && !pdfEnvironment.pdfKoreanWarning);
+    pdfWarning.classList.toggle('alert-warning', pdfEnvironment === null || pdfEnvironment.pdfKoreanWarning);
+    if (pdfEnvironmentError !== null) {
+      pdfWarning.textContent = 'PDF 글꼴 상태 조회 실패: ' + pdfEnvironmentError
+        + ' 페이지를 새로고침하거나 서버 글꼴 설정을 확인해 주세요. 한글 표시는 확인되지 않았습니다.';
+    } else if (pdfEnvironment === null) {
+      pdfWarning.textContent = 'PDF 글꼴 상태를 확인 중입니다.';
+    } else if (pdfEnvironment.pdfKoreanWarning) {
+      pdfWarning.textContent = (pdfEnvironment.pdfFonts.fonts.length === 0
+        ? '사용할 수 있는 PDF 글꼴을 찾지 못했습니다. '
+        : '기본 한글 샘플을 지원하는 PDF 글꼴을 찾지 못했습니다. ')
+        + '서버 글꼴 설정을 확인하거나 DOCX를 사용하세요. PDF 변환은 계속할 수 있으나 한글이 누락될 수 있습니다.';
+    } else {
+      pdfWarning.textContent = '서버 시작 시 설정된 PDF 글꼴에서 기본 한글 샘플 지원을 확인했습니다. '
+        + '선택한 글꼴·모든 문자·최종 레이아웃의 표시를 보장하지는 않습니다. 글꼴 변경 후에는 서버를 재시작하세요.';
+    }
+  }
 
-  formatSelect.addEventListener('change', () => {
-    pdfWarning.classList.toggle('d-none', !(pdfKoreanWarning && formatSelect.value === 'pdf'));
-  });
+  async function loadPdfEnvironment() {
+    try {
+      const info = await conversionJson('/api/system/info');
+      if (info === null || typeof info !== 'object' || typeof info.pdfKoreanWarning !== 'boolean'
+          || !info.pdfFonts || !Array.isArray(info.pdfFonts.fonts)) {
+        throw new Error('서버 글꼴 상태 응답 형식이 올바르지 않습니다.');
+      }
+      pdfEnvironment = info;
+    } catch (e) {
+      pdfEnvironmentError = e.message;
+    }
+    updatePdfWarning();
+  }
+
+  formatSelect.addEventListener('change', updatePdfWarning);
+  updatePdfWarning();
+  loadPdfEnvironment();
 
   // ── 파일 드래그&드롭 ──────────────────────────────────────────────────────
   let selectedFile = null;
@@ -399,6 +436,13 @@ System.out.println("Hello, md2docu!");
 
   function handleFile(file) {
     if (!file) return;
+    if (!/\.(md|zip)$/i.test(file.name) || file.size === 0) {
+      selectedFile = null;
+      fileInput.value = '';
+      document.getElementById('file-info').classList.add('d-none');
+      showError('내용이 있는 .md 또는 .zip 파일을 선택해 주세요.');
+      return;
+    }
     selectedFile = file;
     const info = document.getElementById('file-info');
     info.textContent = `📄 ${file.name}  (${(file.size / 1024).toFixed(1)} KB)`;
@@ -422,8 +466,11 @@ System.out.println("Hello, md2docu!");
 
   function handleDocxFile(file) {
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.docx')) {
-      alert('.docx 파일만 업로드할 수 있습니다.');
+    if (!file.name.toLowerCase().endsWith('.docx') || file.size === 0) {
+      selectedDocxFile = null;
+      fileInputDocx.value = '';
+      document.getElementById('file-info-docx').classList.add('d-none');
+      showError('내용이 있는 .docx 파일을 선택해 주세요.');
       return;
     }
     selectedDocxFile = file;
@@ -433,28 +480,80 @@ System.out.println("Hello, md2docu!");
   }
 
   // ── 미리보기 ──────────────────────────────────────────────────────────────
-  document.getElementById('btn-preview').addEventListener('click', updatePreview);
-  document.getElementById('editor').addEventListener('input', debounce(updatePreview, 600));
+  const previewPane = document.getElementById('preview-pane');
+  const previewStatus = document.getElementById('preview-status');
+  const previewButton = document.getElementById('btn-preview');
+  let previewRevision = 0;
+  let previewController = null;
+  let previewTimer = null;
+  let hasPreview = false;
 
-  async function updatePreview() {
-    const markdown    = document.getElementById('editor').value;
-    const numbering   = document.getElementById('opt-numbering').checked;
-    try {
-      const res = await fetch('/api/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ markdown, numberHeadings: numbering })
-      });
-      const data = await res.json();
-      document.getElementById('preview-pane').innerHTML = data.html;
-    } catch (e) { /* 무시 */ }
+  previewButton.addEventListener('click', () => updatePreview());
+  document.getElementById('editor').addEventListener('input', () => updatePreview(600));
+  document.getElementById('opt-numbering').addEventListener('change', () => updatePreview());
+
+  function updatePreview(delay = 0) {
+    const revision = ++previewRevision;
+    clearTimeout(previewTimer);
+    previewTimer = null;
+    if (previewController) {
+      previewController.abort();
+      previewController = null;
+    }
+    previewPane.setAttribute('aria-busy', 'true');
+    previewButton.textContent = '미리보기 갱신';
+    setPreviewStatus(delay > 0 ? '입력이 변경되어 미리보기 갱신을 기다리고 있습니다.' : '미리보기 갱신 중입니다.', 'pending');
+    if (delay > 0) {
+      previewTimer = setTimeout(() => {
+        if (revision !== previewRevision) return;
+        previewTimer = null;
+        renderPreview(revision);
+      }, delay);
+      return;
+    }
+    return renderPreview(revision);
   }
 
-  // 초기 미리보기
-  updatePreview();
+  async function renderPreview(revision) {
+    if (revision !== previewRevision) return;
+    const controller = new AbortController();
+    previewController = controller;
+    try {
+      const data = await conversionJson('/api/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          markdown: document.getElementById('editor').value,
+          numberHeadings: document.getElementById('opt-numbering').checked
+        })
+      });
+      if (revision !== previewRevision) return;
+      if (data === null || typeof data !== 'object' || Array.isArray(data) || typeof data.html !== 'string') {
+        throw new Error('서버 미리보기 응답 형식이 올바르지 않습니다.');
+      }
+      previewPane.innerHTML = data.html;
+      hasPreview = true;
+      setPreviewStatus('최신 입력의 미리보기입니다.', 'ready');
+    } catch (e) {
+      if (revision !== previewRevision) return;
+      setPreviewStatus('미리보기 오류: ' + e.message + ' 갱신 버튼으로 다시 시도해 주세요.', 'error');
+      previewButton.textContent = '미리보기 다시 시도';
+    } finally {
+      if (revision === previewRevision) {
+        previewController = null;
+        previewPane.setAttribute('aria-busy', 'false');
+      }
+    }
+  }
 
-  // 소제목 번호 체크 변경 시 미리보기 갱신
-  document.getElementById('opt-numbering').addEventListener('change', updatePreview);
+  function setPreviewStatus(message, state) {
+    const stale = hasPreview && state !== 'ready';
+    previewStatus.className = 'small mt-1 ' + (state === 'error' ? 'text-danger' : stale ? 'text-warning-emphasis' : 'text-muted');
+    previewStatus.textContent = message + (stale ? ' 이전 결과를 표시하고 있으며 현재 입력과 다를 수 있습니다.' : '');
+  }
+
+  updatePreview();
 
   // ── 변환 ──────────────────────────────────────────────────────────────────
   document.getElementById('btn-convert').addEventListener('click', async () => {
@@ -475,31 +574,25 @@ System.out.println("Hello, md2docu!");
       if (activeTab === 'url') {
         const url = document.getElementById('url-input').value.trim();
         if (!url) { alert('URL을 입력해 주세요.'); setLoading(false); return; }
-        const res = await fetch(`/api/convert/${format}/url`, {
+        data = await conversionJson(`/api/convert/${format}/url`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url, pageSize, linkStrategy: link, includeImages: images, numberHeadings: numbering, generateToc: toc })
         });
-        data = await res.json();
-        if (!res.ok) throw new Error(data.error || '변환 오류');
       } else if (activeTab === 'docx2md') {
         if (!selectedDocxFile) { alert('.docx 파일을 선택해 주세요.'); setLoading(false); return; }
         const splitByChapter = document.getElementById('opt-split-chapter').checked;
         const form = new FormData();
         form.append('file', selectedDocxFile);
         form.append('splitByChapter', splitByChapter);
-        const res = await fetch('/api/convert/md', { method: 'POST', body: form });
-        data = await res.json();
-        if (!res.ok) throw new Error(data.error || '변환 오류');
+        data = await conversionJson('/api/convert/md', { method: 'POST', body: form });
       } else if (activeTab === 'editor') {
         const markdown = document.getElementById('editor').value;
-        const res = await fetch(`/api/convert/${format}/text`, {
+        data = await conversionJson(`/api/convert/${format}/text`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ markdown, pageSize, linkStrategy: link, includeImages: images, numberHeadings: numbering, generateToc: toc })
         });
-        data = await res.json();
-        if (!res.ok) throw new Error(data.error || '변환 오류');
       } else {
         if (!selectedFile) { alert('파일을 선택해 주세요.'); setLoading(false); return; }
         const form = new FormData();
@@ -509,9 +602,7 @@ System.out.println("Hello, md2docu!");
         form.append('includeImages', images);
         form.append('numberHeadings', numbering);
         form.append('generateToc', toc);
-        const res = await fetch(`/api/convert/${format}`, { method: 'POST', body: form });
-        data = await res.json();
-        if (!res.ok) throw new Error(data.error || '변환 오류');
+        data = await conversionJson(`/api/convert/${format}`, { method: 'POST', body: form });
       }
 
       showResult(data);
@@ -522,7 +613,28 @@ System.out.println("Hello, md2docu!");
     }
   });
 
+  async function conversionJson(url, options) {
+    const response = await fetch(url, options);
+    let data;
+    try {
+      data = await response.json();
+    } catch (e) {
+      throw new Error('서버 응답이 올바른 JSON이 아닙니다 (HTTP ' + response.status + ').');
+    }
+    if (!response.ok) {
+      const message = data && typeof data.error === 'string' && data.error.trim()
+        ? data.error : '요청 실패 (HTTP ' + response.status + ')';
+      throw new Error(message);
+    }
+    return data;
+  }
+
   function showResult(data) {
+    const expiresAt = new Date(data.expiresAt);
+    if (typeof data.expiresAt !== 'string' || !Number.isFinite(expiresAt.getTime())) {
+      throw new Error('서버 응답에 올바른 결과 만료 시각이 없습니다.');
+    }
+
     // 자동 다운로드
     const a = document.createElement('a');
     a.href = data.downloadUrl;
@@ -536,6 +648,8 @@ System.out.println("Hello, md2docu!");
     link.href = data.downloadUrl;
     link.download = data.fileName;
     link.textContent = data.fileName + ' 다시 받기';
+    document.getElementById('result-retention').textContent =
+      '보관 기한: ' + expiresAt.toLocaleString() + '. 한도 초과·서버 재시작 시 더 일찍 삭제될 수 있습니다.';
     document.getElementById('result-box').style.display = '';
 
     const warnings = data.warnings || [];
@@ -568,32 +682,45 @@ System.out.println("Hello, md2docu!");
     document.getElementById('btn-convert').disabled = v;
   }
 
-  function debounce(fn, delay) {
-    let t;
-    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
+  // ── 출력 설정 모달 ────────────────────────────────────────────────────────
+  let settingsRevision = 0;
+  let settingsLoaded = false;
+  const settingsSave = document.getElementById('btn-settings-save');
+  const settingsReset = document.getElementById('btn-settings-reset');
+
+  async function settingsJson(url, options) {
+    const response = await fetch(url, options);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'HTTP ' + response.status);
+    return data;
   }
 
-  // ── 출력 설정 모달 ────────────────────────────────────────────────────────
-  const DEFAULT_SETTINGS = {
-    bodyFontFamily: 'Malgun Gothic, Noto Sans CJK, Arial, sans-serif',
-    bodyFontSizePt: 11, codeFontSizePt: 10, lineHeight: 1.6,
-    h1FontSizePt: 24, h2FontSizePt: 20, h3FontSizePt: 16,
-    h4FontSizePt: 14, h5FontSizePt: 12, h6FontSizePt: 11,
-    marginTopMm: 20, marginBottomMm: 20, marginLeftMm: 25, marginRightMm: 25
-  };
+  function settingsError(message) {
+    const box = document.getElementById('settings-save-error');
+    box.textContent = message;
+    box.classList.remove('d-none');
+  }
 
   document.getElementById('settingsModal').addEventListener('show.bs.modal', async () => {
+    const revision = ++settingsRevision;
+    settingsLoaded = false;
+    settingsSave.disabled = true;
+    settingsReset.disabled = true;
+    document.getElementById('settings-save-error').classList.add('d-none');
     const [settingsRes, fontsRes] = await Promise.allSettled([
-      fetch('/api/settings'),
-      fetch('/api/settings/fonts')
+      settingsJson('/api/settings'),
+      settingsJson('/api/settings/fonts')
     ]);
-
-    if (settingsRes.status === 'fulfilled' && settingsRes.value.ok) {
-      applySettingsToForm(await settingsRes.value.json());
+    if (revision !== settingsRevision) return;
+    if (settingsRes.status === 'fulfilled') {
+      applySettingsToForm(settingsRes.value);
+      settingsLoaded = true;
+    } else {
+      settingsError('설정 불러오기 실패: ' + settingsRes.reason.message);
     }
 
-    if (fontsRes.status === 'fulfilled' && fontsRes.value.ok) {
-      const families = await fontsRes.value.json();
+    if (fontsRes.status === 'fulfilled') {
+      const families = fontsRes.value;
       const datalist = document.getElementById('font-suggestions');
       datalist.innerHTML = '';
       families.forEach(f => {
@@ -613,7 +740,17 @@ System.out.println("Hello, md2docu!");
       } else {
         wrapEl.classList.add('d-none');
       }
+    } else {
+      document.getElementById('detected-fonts-wrap').classList.add('d-none');
+      const previous = settingsRes.status === 'rejected' ? '설정 불러오기 실패: ' + settingsRes.reason.message + ' / ' : '';
+      settingsError(previous + '글꼴 목록 불러오기 실패: ' + fontsRes.reason.message + ' (글꼴 직접 입력 가능)');
     }
+    settingsSave.disabled = !settingsLoaded;
+    settingsReset.disabled = false;
+  });
+
+  document.getElementById('settingsModal').addEventListener('hidden.bs.modal', () => {
+    ++settingsRevision;
   });
 
   function applySettingsToForm(s) {
@@ -653,29 +790,57 @@ System.out.println("Hello, md2docu!");
     };
   }
 
-  document.getElementById('btn-settings-save').addEventListener('click', async () => {
-    const errBox = document.getElementById('settings-save-error');
+  settingsSave.addEventListener('click', async () => {
+    if (!settingsLoaded) {
+      settingsError('설정을 먼저 불러오거나 기본값으로 복원하세요.');
+      return;
+    }
+    for (const input of document.querySelectorAll('#settingsModal input[type="number"]')) {
+      if (!input.value.trim() || !input.checkValidity()) {
+        input.reportValidity();
+        settingsError('숫자 항목을 표시된 범위에 맞게 입력하세요.');
+        return;
+      }
+    }
+    const revision = ++settingsRevision;
+    settingsSave.disabled = true;
+    settingsReset.disabled = true;
     try {
-      const res = await fetch('/api/settings', {
+      const saved = await settingsJson('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(readSettingsFromForm())
       });
-      if (res.ok) {
-        bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        errBox.textContent = '저장 실패: ' + (data.error || res.status);
-        errBox.classList.remove('d-none');
-      }
+      if (revision !== settingsRevision) return;
+      applySettingsToForm(saved);
+      bootstrap.Modal.getInstance(document.getElementById('settingsModal')).hide();
     } catch(e) {
-      errBox.textContent = '저장 실패: ' + e.message;
-      errBox.classList.remove('d-none');
+      if (revision === settingsRevision) settingsError('저장 실패: ' + e.message);
+    } finally {
+      if (revision === settingsRevision) {
+        settingsSave.disabled = !settingsLoaded;
+        settingsReset.disabled = false;
+      }
     }
   });
 
-  document.getElementById('btn-settings-reset').addEventListener('click', () => {
-    applySettingsToForm(DEFAULT_SETTINGS);
+  settingsReset.addEventListener('click', async () => {
+    const revision = ++settingsRevision;
+    settingsSave.disabled = true;
+    settingsReset.disabled = true;
+    try {
+      const defaults = await settingsJson('/api/settings/defaults');
+      if (revision !== settingsRevision) return;
+      applySettingsToForm(defaults);
+      settingsLoaded = true;
+    } catch(e) {
+      if (revision === settingsRevision) settingsError('기본값 불러오기 실패: ' + e.message);
+    } finally {
+      if (revision === settingsRevision) {
+        settingsSave.disabled = !settingsLoaded;
+        settingsReset.disabled = false;
+      }
+    }
   });
 </script>
 </body>

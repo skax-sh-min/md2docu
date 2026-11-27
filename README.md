@@ -25,6 +25,7 @@ Markdown을 **PDF / DOCX**로 변환하고 **DOCX를 Markdown으로 역변환**�
 | GitHub CLI | CLI 릴리즈 절차를 사용할 때만 필요. 웹 UI로 대체 가능 |
 
 명령은 **Bash를 우선**으로 안내하며 프로젝트 루트에서 실행합니다. 셸별 문법이 다른 경우 Bash 다음에 Windows PowerShell 예제를 제공합니다. 공통 명령은 한 번만 표기합니다. Bash 예제는 Linux/macOS 기준이며, Windows의 Git Bash·WSL에서는 Java·Maven·파일 경로를 해당 실행 환경에 맞추세요.
+Windows용 스크립트는 Git for Windows의 Bash가 필요합니다. 자동 검색되지 않으면 환경 변수 `SCRIPT_BASH`에 `bash.exe`의 전체 경로를 지정하세요.
 
 **Bash**
 
@@ -65,6 +66,9 @@ mvn verify
 
 # JavaScript 회귀 검증: Maven과 별도 실행
 node --test src/test/js/preview.test.cjs src/test/js/pdf-environment.test.cjs
+
+# 릴리즈·실행 스크립트 테스트 (Windows에서는 Git for Windows 필요)
+node --test src/test/js/scripts.test.cjs
 
 # Markdown 목차·제목 링크·번호
 mvn "-Dtest=MarkdownServiceTest" test
@@ -142,6 +146,24 @@ mvn spring-boot:run
 
 ### 빌드 JAR 실행
 
+스크립트는 현재 빌드의 버전을 `target/maven-archiver/pom.properties`에서 읽습니다. `-b`(`--build`)는 빌드 후 실행하고, `-cb`(`--clean-build`)는 기존 빌드 출력을 삭제하고 다시 빌드한 뒤 실행합니다. `--` 뒤의 인자는 애플리케이션에 전달합니다.
+
+**Bash**
+
+```bash
+sh scripts/run_by_jar.sh -cb -- --server.port=9090
+sh scripts/run_by_jar.sh
+```
+
+**Windows cmd / PowerShell**
+
+```powershell
+.\scripts\run_by_jar.cmd -cb -- --server.port=9090
+.\scripts\run_by_jar.cmd
+```
+
+또는 JAR을 직접 실행할 수 있습니다.
+
 **Bash**
 
 ```bash
@@ -192,7 +214,24 @@ java -jar .\target\md2docu-0.1.4-SNAPSHOT.jar `
 
 ## GitHub 릴리즈
 
-현재 저장소에는 GitHub Actions 릴리즈 워크플로가 없으므로 **태그를 푸시하는 것만으로 빌드·테스트·릴리즈 업로드가 자동 실행되지 않습니다.** 아래는 수동 배포 절차이며 명령을 문서화한 것이지 실제 릴리즈를 게시한 것은 아닙니다.
+현재 저장소에는 GitHub Actions 릴리즈 워크플로가 없으므로 **태그를 푸시하는 것만으로 빌드·테스트·릴리즈 업로드가 자동 실행되지 않습니다.**
+
+### 릴리즈 스크립트
+
+스크립트는 프로젝트 버전으로 빌드하고 Java·JavaScript 및 스크립트 테스트, JAR 버전·시작 클래스 확인 후 `target/release`에 JAR, 체크섬, 매뉴얼과 라이선스 고지를 준비합니다. `--build-only`는 POM을 원래 상태로 복원하며 Git을 변경하지 않습니다.
+
+```bash
+sh scripts/release.sh --build-only
+sh scripts/release.sh --no-publish
+sh scripts/release.sh --pr
+sh scripts/release.sh --help
+```
+
+Windows에서는 각각 `.\scripts\release_windows.cmd`로 실행합니다. Maven, Java 21 이상, Node.js와 `unzip`이 필요하며 Windows에서는 Git for Windows가 `unzip`을 제공합니다. 기본 버전은 POM의 `-SNAPSHOT`을 제거한 값입니다. 첫 인자로 `1.2.3`처럼 지정하거나 `--next 1.2.4-SNAPSHOT`으로 다음 개발 버전을 지정할 수 있습니다.
+
+`--build-only` 외에는 깨끗한 작업 트리와 최신 `origin/main`을 확인하고 사용자 확인 후 릴리즈 커밋·태그와 다음 SNAPSHOT 커밋을 만듭니다. 다른 브랜치는 `--any-branch`가 필요합니다. `--no-publish`는 로컬 커밋·태그까지만 수행합니다. 기본 모드는 GitHub CLI 인증이 필요하며 브랜치와 태그를 푸시하고 **초안** 릴리즈를 만듭니다. `--pr`은 릴리즈 브랜치에 커밋하며 게시 모드에서 PR도 생성합니다. 태그가 이력에 남도록 PR은 merge commit으로 병합하고, 초안은 병합 후 검토·게시하세요. `--notes-file`로 릴리즈 노트 파일을 지정할 수 있으며, `--skip-tests`는 Java와 JavaScript 테스트를 모두 생략합니다. 스크립트 실행 중 `mvn clean`이 기존 `target` 출력을 삭제합니다.
+
+배포 전 실제 뷰어·브라우저 확인과 한글 글꼴 테스트의 건너뜀 여부는 별도로 확인하고 릴리즈 노트에 기록하세요. 아래 수동 절차도 사용할 수 있습니다.
 
 ### 1. 버전과 배포 커밋 확정
 
